@@ -1,11 +1,13 @@
-
 use std::time::{Duration, Instant};
-use shakmaty::{Chess, Move, Position};
-use crate::engine::constants::CHECKMATE_VALUE;
+use chess::{Board, ChessMove, MoveGen, BoardStatus, Piece};
+use chess::BoardStatus::{Checkmate, Stalemate};
 use crate::engine::eval::evaluate;
 use crate::engine::params::Params;
-use crate::engine::search::pv::PvTable;
+use crate::engine::search::context::SearchContext;
+use crate::engine::search::ordering::{is_capture, MoveOrdering};
+use crate::engine::search::pv::{MultiPv, PvTable};
 use crate::engine::time_manager::compute_time_limit;
+use crate::engine::types::{DRAW_SCORE, MATE_SCORE};
 
 #[derive(Default)]
 pub struct SearchStats {
@@ -15,17 +17,28 @@ pub struct SearchStats {
     pub seldepth: u32,
     pub duration: Duration,
 }
-pub fn search(
-    pos: &Chess,
-    params: &Params,
-    stats: &mut SearchStats,
-    max_depth: usize,
-    time_remaining: Option<Duration>,
-) -> (Move, f32) {
-    let start = Instant::now();
-    let total_time = compute_time_limit(time_remaining, Some(0));
 
-    let mut pv = PvTable::new(max_depth);
+pub fn search(
+    board: &Board,
+    params: &Params,
+    max_depth: usize,
+    multipv_count: usize,
+    time_remaining: Option<Duration>,
+) -> (ChessMove, f32, SearchStats, MultiPv) {
+
+    let start = Instant::now();
+    let total_time = compute_time_limit(board, time_remaining, Some(Duration::ZERO));
+
+    let ordering = MoveOrdering::new(&params.piece_values);
+
+    let mut ctx = SearchContext {
+        params,
+        ordering: &ordering,
+        pv: PvTable::new(64),
+        stats: SearchStats::default(),
+        multipv: MultiPv::new(multipv_count),
+    };
+
     let mut best_score = f32::NEG_INFINITY;
 
     for depth in 1..=max_depth {
@@ -33,67 +46,140 @@ pub fn search(
             break;
         }
 
-        pv.clear_from(0);
+        ctx.pv.clear_from(0);
+        ctx.multipv.clear();
 
-        best_score = negamax(
-            pos,
-            params,
-            stats,
-            &mut pv,
-            depth,
-            0,
-            f32::NEG_INFINITY,
-            f32::INFINITY,
-        );
+        let score = negamax(board, &mut ctx, depth, 0, f32::NEG_INFINITY, f32::INFINITY);
+        best_score = score;
     }
 
+    ctx.stats.duration = start.elapsed();
+
     (
-        pv.best_move().expect("no legal moves"),
+        ctx.pv.best_move().expect("no legal moves"),
         best_score,
+        ctx.stats,
+        ctx.multipv,
     )
 }
 
+#[inline(always)]
+fn negamax(
+    board: &Board,
+    ctx: &mut SearchContext,
+    mut depth: usize,
+    ply: usize,
+    mut alpha: f32,
+    beta: f32,
+) -> f32 {
 
-fn negamax(pos: &Chess, params : &Params, stats: &mut SearchStats, depth: usize, ply: i32, mut alpha: f32, beta: f32) -> f32 {
-    stats.nodes +=1;
-    stats.depth_sum += ply as u64;
-    stats.depth_samples += 1;
-    if pos.is_checkmate() {
-        return -CHECKMATE_VALUE-depth as f32
+    ctx.stats.nodes += 1;
+    ctx.stats.depth_sum += ply as u64;
+    ctx.stats.depth_samples += 1;
+    ctx.stats.seldepth = ctx.stats.seldepth.max(ply as u32);
+
+
+
+    match board.status() {
+        Checkmate => return -(MATE_SCORE as f32) + ply as f32,
+        Stalemate => return DRAW_SCORE as f32,
+        _ => {}
     }
-    if pos.is_stalemate() || pos.is_insufficient_material() {
-        return 0.0
+    ctx.pv.clear_from(ply+1);
+
+
+    if board.checkers().popcnt() > 0 {
+        depth += 1;
     }
 
     if depth == 0 {
-        return evaluate(pos, params);
+        return quiescence(board, ctx, alpha, beta);
     }
 
-    let mut score = 0.0;
     let mut best_score = f32::NEG_INFINITY;
 
-    let move_list = pos.legal_moves();
+    let mut moves: Vec<ChessMove> = MoveGen::new_legal(board).collect();
 
-    for i in 0..move_list.len() {
-        let mv = &move_list[i];
-        let mut child_pos = pos.clone();
-        child_pos.play_unchecked(mv);
-        score = -negamax(&child_pos, params,stats,depth - 1,ply+1, -beta, -alpha);
+    let pv_move = ctx.pv.table.get(ply).and_then(|l| l.first());
+
+
+    ctx.ordering.order_moves(board, pv_move, &mut moves);
+
+    for mv in moves {
+        let child = board.make_move_new(mv);
+        let score = -negamax(&child, ctx, depth - 1, ply + 1, -beta, -alpha);
 
         if score > best_score {
             best_score = score;
+            update_pv(ply, mv, best_score, ctx);
         }
-        if score >= beta{
+
+        if best_score >= beta {
             break;
         }
+
+        if best_score > alpha {
+            alpha = best_score;
+        }
+    }
+
+    best_score
+}
+
+#[inline(always)]
+fn quiescence(
+    board: &Board,
+    ctx: &mut SearchContext,
+    mut alpha: f32,
+    beta: f32,
+) -> f32 {
+
+    ctx.stats.nodes += 1;
+
+    let stand_pat = evaluate(board, ctx.params);
+
+    if stand_pat >= beta {
+        return beta;
+    }
+
+    if stand_pat > alpha {
+        alpha = stand_pat;
+    }
+
+    // Generate tactical moves only
+    let mut moves: Vec<ChessMove> =
+        MoveGen::new_legal(board)
+            .filter(|m| is_capture(board, m))
+            .collect();
+
+    ctx.ordering.order_moves(board, None, &mut moves);
+
+    for mv in moves {
+        let child = board.make_move_new(mv);
+        let score = -quiescence(&child, ctx, -beta, -alpha);
+
+        if score >= beta {
+            return beta;
+        }
+
         if score > alpha {
             alpha = score;
         }
     }
-    best_score
 
+    alpha
 }
 
 
 
+#[inline(always)]
+fn update_pv(ply : usize, mv: ChessMove,best_score: f32,ctx: &mut SearchContext) {
+    let child_line = ctx.pv.table[ply + 1].clone();
+    ctx.pv.set_pv(ply, mv.clone(), &child_line);
+
+    // ---- MULTI-PV (ROOT ONLY) ----
+    if ply == 0 {
+        ctx.multipv.insert(best_score, ctx.pv.pv_line().to_vec());
+    }
+}
 
