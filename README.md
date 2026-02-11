@@ -27,9 +27,6 @@ This engine is built as a performance-driven learning project, combining efficie
 - Efficient Move Ordering:
   - PV move priority
   - MVV-LVA capture sorting
-- Time management system
-- `go depth X` support
-- NPS / nodes / time reporting
 
 ---
 
