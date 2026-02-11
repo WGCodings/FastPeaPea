@@ -71,3 +71,12 @@ Install Rust:
 
 ```bash
 rustup update
+
+```bash
+git clone https://github.com/WGCodings/FastPeaPea.git
+cargo build --release
+
+
+## 📜 License
+
+Fast Pea Pea is licensed under the [MIT license](https://opensource.org/licenses/MIT).
