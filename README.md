@@ -71,11 +71,11 @@ Install Rust:
 
 ```bash
 rustup update
-
+```
 ```bash
 git clone https://github.com/WGCodings/FastPeaPea.git
 cargo build --release
-
+```
 
 ## 📜 License
 
