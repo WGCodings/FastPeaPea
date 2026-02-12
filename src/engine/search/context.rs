@@ -1,3 +1,4 @@
+use shakmaty::zobrist::ZobristHash;
 use crate::engine::search::{
     ordering::MoveOrdering,
     pv::PvTable,

@@ -1,11 +1,11 @@
-use chess::{Board, MoveGen};
+use shakmaty::{Chess, Position};
 
-pub fn perft(board: &Board, depth: u32) -> u64 {
+pub fn perft(pos: &Chess, depth: u32) -> u64 {
     if depth == 0 {
         return 1;
     }
 
-    let moves = MoveGen::new_legal(board);
+    let moves = pos.legal_moves();
 
     if depth == 1 {
         return moves.len() as u64;
@@ -14,7 +14,8 @@ pub fn perft(board: &Board, depth: u32) -> u64 {
     let mut nodes = 0;
 
     for mv in moves {
-        let child = board.make_move_new(mv);
+        let mut child = pos.clone();
+        child.play_unchecked(&mv);
         nodes += perft(&child, depth - 1);
     }
 

@@ -1,11 +1,14 @@
-use chess::{ChessMove};
-use std::str::FromStr;
+use shakmaty::{CastlingMode, Chess, Move};
+use shakmaty::uci::UciMove;
 
 pub enum UciCommand {
     Uci,
     IsReady,
     UciNewGame,
-    Position { fen: Option<String>, moves: Vec<String> },
+    Position {
+        fen: Option<String>,
+        moves: Vec<String>,
+    },
     Go {
         wtime: Option<u64>,
         btime: Option<u64>,
@@ -20,12 +23,15 @@ pub enum UciCommand {
         name: String,
         value: String,
     },
-    Perft { depth: u32 },
+    Perft {
+        depth: u32,
+    },
     Unknown,
 }
 
 pub fn parse_command(input: &str) -> UciCommand {
     let tokens: Vec<&str> = input.trim().split_whitespace().collect();
+
     if tokens.is_empty() {
         return UciCommand::Unknown;
     }
@@ -66,8 +72,8 @@ pub fn parse_command(input: &str) -> UciCommand {
             let mut binc = None;
             let mut depth = None;
 
-
             let mut i = 1;
+
             while i + 1 < tokens.len() {
                 match tokens[i] {
                     "wtime" => wtime = tokens[i + 1].parse().ok(),
@@ -81,13 +87,20 @@ pub fn parse_command(input: &str) -> UciCommand {
                 i += 2;
             }
 
-            UciCommand::Go { wtime, btime, movetime, winc, binc, depth }
+            UciCommand::Go {
+                wtime,
+                btime,
+                movetime,
+                winc,
+                binc,
+                depth,
+            }
         }
         "setoption" => {
             let mut name = String::new();
             let mut value = String::new();
-
             let mut i = 1;
+
             while i < tokens.len() {
                 match tokens[i] {
                     "name" => {
@@ -115,27 +128,26 @@ pub fn parse_command(input: &str) -> UciCommand {
             }
 
             UciCommand::SetOption { name, value }
-        },
-        "perft"  => {
+        }
+        "perft" => {
             if tokens.len() >= 2 {
                 if let Ok(depth) = tokens[1].parse::<u32>() {
                     return UciCommand::Perft { depth };
                 }
             }
-            return UciCommand::Perft { depth: 1 }; // fallback
-        },
+
+            UciCommand::Perft { depth: 1 }
+        }
 
         _ => UciCommand::Unknown,
     }
 }
 
-
-
-pub fn move_to_uci(mv: &ChessMove) -> String {
-    mv.to_string()
+pub fn move_to_uci(mv: &Move) -> String {
+    mv.to_uci(CastlingMode::Standard).to_string()
 }
 
-pub fn uci_to_move( s: &str) -> ChessMove {
-    ChessMove::from_str(s).unwrap()
+pub fn uci_to_move(pos: &Chess, s: &str) -> Move {
+    let uci: UciMove = s.parse().unwrap();
+    uci.to_move(pos).unwrap()
 }
-

@@ -1,4 +1,4 @@
-use chess::{Board, ChessMove, Piece};
+use shakmaty::{Chess, Move, MoveList, Position, Role};
 
 #[derive(Clone)]
 pub struct MoveOrdering {
@@ -11,6 +11,7 @@ impl MoveOrdering {
 
         for attacker in 0..6 {
             for victim in 0..6 {
+                // Higher = better
                 table[attacker][victim] =
                     (piece_values[victim] as i32 + 6)
                         - (piece_values[attacker] as i32 / 100);
@@ -23,54 +24,49 @@ impl MoveOrdering {
     #[inline(always)]
     pub fn order_moves(
         &self,
-        board: &Board,
-        pv_move: Option<&ChessMove>,
-        moves: &mut Vec<ChessMove>,
+        pos: &Chess,
+        pv_move: Option<&Move>,
+        moves: &mut MoveList,
     ) {
-        // 1. PV first
+        // 1. PV move first
         if let Some(pv) = pv_move {
             if let Some(idx) = moves.iter().position(|m| m == pv) {
                 moves.swap(0, idx);
             }
         }
 
-        // 2. Partition captures
+        // 2. Partition captures / quiets
         let (mut captures, quiets): (Vec<_>, Vec<_>) =
-            moves.drain(..).partition(|mv| is_capture(board, mv));
+            moves.drain(..).partition(|mv| mv.is_capture());
 
         // 3. Order captures by MVV-LVA
-        self.order_captures(board, &mut captures);
+        self.order_captures(pos, &mut captures);
 
-        // 4. Rebuild
+        // 4. Rebuild move list
         moves.extend(captures);
         moves.extend(quiets);
     }
 
+
     #[inline(always)]
-    pub fn order_captures(&self, board: &Board, moves: &mut [ChessMove]) {
-        moves.sort_by_key(|mv| -self.mvv_lva_score(board, mv));
+    pub fn order_captures(&self, pos: &Chess, moves: &mut [Move]) {
+        moves.sort_by_key(|mv| -self.mvv_lva_score(pos, mv));
     }
-
-
-
     #[inline(always)]
-    pub fn mvv_lva_score(&self, board: &Board, mv: &ChessMove) -> i32 {
-        let attacker_piece = board
-            .piece_on(mv.get_source())
+    pub fn mvv_lva_score(&self, pos: &Chess, mv: &Move) -> i32 {
+        let board = pos.board();
+
+        let attacker_role = board
+            .role_at(mv.from().unwrap())
             .expect("attacker must exist");
 
-        let victim_piece = board
-            .piece_on(mv.get_dest())
-            .unwrap_or(Piece::Pawn); // en-passant fallback
+        let victim_role = board
+            .role_at(mv.to())
+            .unwrap_or(Role::Pawn); // en passant
 
-        let attacker = attacker_piece.to_index();
-        let victim = victim_piece.to_index();
+        let attacker = attacker_role as usize - 1;
+        let victim = victim_role as usize - 1;
 
         self.mvv_lva[attacker][victim]
     }
-}
-#[inline(always)]
-pub fn is_capture(board: &Board, mv: &ChessMove) -> bool {
-    board.piece_on(mv.get_dest()).is_some()
-        || board.en_passant() == Some(mv.get_dest())
 }

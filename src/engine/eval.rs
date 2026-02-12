@@ -1,95 +1,90 @@
-use chess::{Board, Color, Piece, get_knight_moves, get_rook_moves, get_bishop_moves};
-
+use shakmaty::{Chess, Color, Position, Role};
+use shakmaty::attacks::{bishop_attacks, knight_attacks, rook_attacks};
 use crate::engine::params::Params;
 
 
+
 #[inline(always)]
-pub fn evaluate(board: &Board, params: &Params) -> f32 {
+pub fn evaluate(pos: &Chess, params: &Params) -> f32 {
+    let board = pos.board();
     let mut score = 0.0;
 
-    for piece in [
-        Piece::Pawn,
-        Piece::Knight,
-        Piece::Bishop,
-        Piece::Rook,
-        Piece::Queen,
-        Piece::King,
+    for &role in &[
+        Role::Pawn,
+        Role::Knight,
+        Role::Bishop,
+        Role::Rook,
+        Role::Queen,
+        Role::King,
     ] {
-        let idx = piece.to_index();
+        let idx = role as usize - 1;
         let val = params.piece_values[idx] * params.material_weight;
 
-        let white = board.pieces(piece) & board.color_combined(Color::White);
-        let black = board.pieces(piece) & board.color_combined(Color::Black);
+        let white = board.by_color(Color::White) & board.by_role(role);
+        let black = board.by_color(Color::Black) & board.by_role(role);
 
-        score += val * white.popcnt() as f32;
-        score -= val * black.popcnt() as f32;
+        score += val * white.count() as f32;
+        score -= val * black.count() as f32;
     }
+    // === MOBILITY ===
+    let white_mob = mobility_score(pos, params, Color::White);
+    let black_mob = mobility_score(pos, params,Color::Black);
+    score += (white_mob - black_mob) as f32 ;
+    score +=  add_tempo_bonus(pos, params);
 
-    let white_mob = mobility_score(board, params, Color::White);
-    let black_mob = mobility_score(board, params, Color::Black);
-
-    score += (white_mob - black_mob) as f32;
-    score += add_tempo_bonus(board, params);
-
-    if board.side_to_move() == Color::White {
+    if pos.turn() == Color::White {
         score
     } else {
         -score
     }
 }
 #[inline(always)]
-fn add_tempo_bonus(board: &Board, params: &Params) -> f32 {
-    if board.side_to_move() == Color::White {
+fn add_tempo_bonus(pos: &Chess,params: &Params) -> f32{
+    if pos.turn() == Color::White {
         params.tempo_bonus
     } else {
         -params.tempo_bonus
     }
 }
-
 #[inline(always)]
-fn mobility_score(board: &Board, params: &Params, color: Color) -> i32 {
+fn mobility_score(pos: &Chess, params: &Params,color: Color) -> i32 {
+    let board = pos.board();
+    let occ = board.occupied();
+    let own = board.by_color(color);
+
     let mut score = 0;
 
-    let own = board.color_combined(color);
-    let occ = board.combined();
-
     // === KNIGHTS ===
-    let knights = board.pieces(Piece::Knight) & own;
+    let knights = board.by_role(Role::Knight) & own;
     for sq in knights {
-        let attacks = get_knight_moves(sq) & !own;
-        score += attacks.popcnt() as i32
-            * params.mobility_bonus[Piece::Knight.to_index()];
+        let attacks = knight_attacks(sq) & !own;
+        score += attacks.count() as i32 * params.mobility_bonus[Role::Knight as usize-1];
     }
 
     // === BISHOPS ===
-    let bishops = board.pieces(Piece::Bishop) & own;
+    let bishops = board.by_role(Role::Bishop) & own;
     for sq in bishops {
-        let attacks = get_bishop_moves(sq, *occ) & !own;
-        score += attacks.popcnt() as i32
-            * params.mobility_bonus[Piece::Bishop.to_index()];
+        let attacks = bishop_attacks(sq,occ) & !own;
+        score += attacks.count() as i32 * params.mobility_bonus[Role::Bishop as usize-1];
     }
-
     // === ROOKS ===
-    let rooks = board.pieces(Piece::Rook) & own;
+    let rooks = board.by_role(Role::Rook) & own;
     for sq in rooks {
-        let attacks = get_rook_moves(sq, *occ) & !own;
-        score += attacks.popcnt() as i32
-            * params.mobility_bonus[Piece::Rook.to_index()];
+        let attacks =
+            rook_attacks(sq,occ) & !own;
+        score += attacks.count() as i32 * params.mobility_bonus[Role::Rook as usize-1];
     }
 
     // === QUEENS ===
-    let queens = board.pieces(Piece::Queen) & own;
+    let queens = board.by_role(Role::Queen) & own;
     for sq in queens {
-        let attacks = (get_bishop_moves(sq, *occ) |get_rook_moves(sq, *occ)) & !own;
-        score += attacks.popcnt() as i32
-            * params.mobility_bonus[Piece::Queen.to_index()];
+        let attacks =
+            (bishop_attacks(sq,occ) | rook_attacks(sq,occ)) & !own;
+        score += attacks.count() as i32 * params.mobility_bonus[Role::Queen as usize-1];
     }
 
     score
 }
-
-
-
 
 
 

@@ -1,10 +1,9 @@
-use chess::Board;
+use shakmaty::Chess;
 use std::sync::atomic::AtomicBool;
 
-
 pub struct UciState {
-    pub position: Board,
-    pub multipv : usize,
+    pub position: Chess,
+    pub multipv: usize,
     pub _wtime: u64,
     pub _btime: u64,
     pub _winc: u64,
@@ -15,14 +14,13 @@ pub struct UciState {
 impl UciState {
     pub fn new() -> Self {
         Self {
-            position: Board::default(),
+            position: Chess::default(),
             _wtime: 0,
             _btime: 0,
             _winc: 0,
             _binc: 0,
-            multipv: 1, // UCI default
+            multipv: 1,
             stop: AtomicBool::new(false),
         }
     }
 }
-
