@@ -1,11 +1,10 @@
 use std::time::{Duration, Instant};
-use shakmaty::{Chess, Move, Position};
-
+use shakmaty::{Chess, EnPassantMode, Move, Position};
+use shakmaty::zobrist::{Zobrist64, ZobristHash};
 use crate::engine::eval::evaluate;
-use crate::engine::params::Params;
+
 use crate::engine::search::context::SearchContext;
-use crate::engine::search::ordering::MoveOrdering;
-use crate::engine::search::pv::{MultiPv, PvTable};
+
 use crate::engine::time_manager::compute_time_limit;
 use crate::engine::types::{DRAW_SCORE, MATE_SCORE};
 
@@ -18,27 +17,13 @@ pub struct SearchStats {
     pub duration: Duration,
 }
 
-pub fn search(
-    pos: &Chess,
-    params: &Params,
-    max_depth: usize,
-    multipv_count: usize,
-    time_remaining: Option<Duration>,
-) -> (Move, f32, SearchStats, MultiPv) {
+pub fn search(pos: &Chess, ctx: &mut SearchContext, max_depth: usize, time_remaining: Option<Duration>) -> f32 {
+
     let start = Instant::now();
-    let total_time =
-        compute_time_limit(pos, time_remaining, Option::from(Duration::from_millis(0)));
+    let total_time = compute_time_limit(pos, time_remaining, Option::from(Duration::from_millis(0)));
 
     let mut best_score = f32::NEG_INFINITY;
-    let ordering = MoveOrdering::new(&params.piece_values);
 
-    let mut ctx = SearchContext {
-        params,
-        ordering: &ordering,
-        pv: PvTable::new(64),
-        stats: SearchStats::default(),
-        multipv: MultiPv::new(multipv_count),
-    };
 
     for depth in 1..=max_depth {
         if start.elapsed() > total_time {
@@ -48,19 +33,16 @@ pub fn search(
         ctx.pv.clear_from(0);
         ctx.multipv.clear();
 
-        let score = negamax(pos, &mut ctx, depth, 0, f32::NEG_INFINITY, f32::INFINITY);
+        let score = negamax(pos, ctx, depth, 0, f32::NEG_INFINITY, f32::INFINITY);
         best_score = score;
     }
 
     ctx.stats.duration = start.elapsed();
 
-    (
-        ctx.pv.best_move().expect("no legal moves"),
-        best_score,
-        ctx.stats,
-        ctx.multipv,
-    )
+    best_score
+
 }
+
 
 #[inline(always)]
 fn negamax(
@@ -79,11 +61,16 @@ fn negamax(
     ctx.pv.clear_from(ply);
 
     if pos.is_checkmate() {
-        return -(MATE_SCORE as f32) + ply as f32;
+        let score = -MATE_SCORE + ply as f32;
+        return score;
+    }
+
+    if ctx.is_threefold(pos) || ctx.is_50_moves(pos){
+        return DRAW_SCORE;
     }
 
     if pos.is_stalemate() || pos.is_insufficient_material() {
-        return DRAW_SCORE as f32;
+        return DRAW_SCORE;
     }
 
     if pos.is_check() {
@@ -98,16 +85,20 @@ fn negamax(
     let mut moves = pos.legal_moves();
 
     let pv_move = ctx.pv.table.get(ply).and_then(|l| l.first());
-
     ctx.ordering.order_moves(pos, pv_move, &mut moves);
-
 
 
     for mv in moves {
         let mut child_pos = pos.clone();
+
         child_pos.play_unchecked(&mv);
+        let hash = child_pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
+
+        ctx.increase_history(hash);
 
         let score = -negamax(&child_pos, ctx, depth - 1, ply + 1, -beta, -alpha);
+
+        ctx.decrease_history();
 
         if score > best_score {
             best_score = score;
@@ -135,6 +126,11 @@ fn quiescence(
 ) -> f32 {
     ctx.stats.nodes += 1;
 
+
+    if ctx.is_threefold(pos) || ctx.is_50_moves(pos){
+        return DRAW_SCORE;
+    }
+
     let stand_pat = evaluate(pos, ctx.params);
 
     if stand_pat >= beta {
@@ -152,7 +148,12 @@ fn quiescence(
         let mut child = pos.clone();
         child.play_unchecked(&mv);
 
+        let hash = child.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
+        ctx.increase_history(hash);
+
         let score = -quiescence(&child, ctx, -beta, -alpha);
+
+        ctx.decrease_history();
 
         if score >= beta {
             return beta;
@@ -162,9 +163,9 @@ fn quiescence(
             alpha = score;
         }
     }
-
     alpha
 }
+
 
 #[inline(always)]
 fn update_pv(ply: usize, mv: Move, best_score: f32, ctx: &mut SearchContext) {

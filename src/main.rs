@@ -10,7 +10,11 @@ use shakmaty::{perft, Chess, Color, Position};
 use crate::uci::{parser::*, state::*};
 use crate::engine::search::search::search;
 use crate::engine::params::Params;
+use crate::engine::search::ordering::MoveOrdering;
+use crate::engine::search::context::*;
+use crate::engine::search::pv::{MultiPv, PvTable};
 use crate::engine::time_manager::compute_time_limit;
+use crate::engine::state::*;
 use crate::engine::utility::read_position_from_fen;
 
 fn main() {
@@ -25,8 +29,16 @@ fn main() {
         let time_remaining = Duration::from_millis(10000);
         let multipv = 3;
 
-        let (best_move, score, stats, multipv_lines) =
-            search(&pos, &params, max_depth, multipv, Some(time_remaining));
+        let ordering = MoveOrdering::new(&params.piece_values);
+
+        let mut ctx = SearchContext::new(&params, &ordering,multipv);
+
+        let score = search(&pos, &mut ctx, max_depth, Some(time_remaining));
+
+        let best_move = ctx.pv.best_move().unwrap();
+        let stats = ctx.stats;
+        let multipv_lines = ctx.multipv;
+
 
         println!("Best move: {:?}", move_to_uci(&best_move));
         println!("Score: {:.2}", score);
@@ -45,7 +57,8 @@ fn main() {
         }
     } else {
         let stdin = io::stdin();
-        let mut state = UciState::new();
+        let mut uci_state = UciState::new();
+        let mut engine_state = EngineState::new();
         let params = Params::default();
 
         for line in stdin.lock().lines() {
@@ -63,19 +76,22 @@ fn main() {
                 UciCommand::IsReady => println!("readyok"),
 
                 UciCommand::UciNewGame => {
-                    state.position = Chess::default();
+                    uci_state.position = Chess::default();
+                    engine_state.position = Chess::default();
                 }
 
                 UciCommand::Position { fen, moves } => {
                     if let Some(fen) = fen {
-                        state.position = read_position_from_fen(&fen).unwrap();
+                        engine_state.position = read_position_from_fen(&fen).unwrap();
                     } else {
-                        state.position = Chess::default();
+                        engine_state.position = Chess::default();
                     }
+                    engine_state.init_history();
 
                     for mv in moves {
-                        let m = uci_to_move(&state.position, &mv);
-                        state.position.play_unchecked(&m);
+                        let m = uci_to_move(&engine_state.position, &mv);
+                        engine_state.position.play_unchecked(&m);
+                        engine_state.increase_history();
                     }
                 }
 
@@ -87,7 +103,7 @@ fn main() {
                     movetime,
                     depth,
                 } => {
-                    state.stop.store(false, Ordering::Relaxed);
+                    uci_state.stop.store(false, Ordering::Relaxed);
 
                     let max_depth = if let Some(d) = depth {
                         d as usize
@@ -95,12 +111,12 @@ fn main() {
                         64
                     };
 
-                    let remaining = match state.position.turn() {
+                    let remaining = match engine_state.position.turn() {
                         Color::White => wtime.map(Duration::from_millis),
                         Color::Black => btime.map(Duration::from_millis),
                     };
 
-                    let increment = match state.position.turn() {
+                    let increment = match engine_state.position.turn() {
                         Color::White => winc.map(Duration::from_millis),
                         Color::Black => binc.map(Duration::from_millis),
                     };
@@ -112,20 +128,36 @@ fn main() {
                             Some(Duration::MAX / 10)
                         } else {
                             Some(compute_time_limit(
-                                &state.position,
+                                &engine_state.position,
                                 remaining,
                                 increment,
                             ))
                         }
                     };
 
-                    let (best_move, _score, stats, multipv_lines) = search(
-                        &state.position,
-                        &params,
+                    let ordering = MoveOrdering::new(&params.piece_values);
+                    let repetition_stack = engine_state.repetition_stack.clone();
+
+                    let mut ctx = SearchContext {
+                        params: &params,
+                        ordering: &ordering,
+                        pv: PvTable::new(64),
+                        stats: Default::default(),
+                        multipv: MultiPv::new(uci_state.multipv),
+                        repetition_stack,
+                    };
+
+                    let _score = search(
+                        &engine_state.position,
+                        &mut ctx,
                         max_depth,
-                        state.multipv,
                         time_limit,
                     );
+
+                    let stats = ctx.stats;
+                    let multipv_lines = ctx.multipv;
+                    let best_move = ctx.pv.best_move().unwrap();
+
 
                     let elapsed = stats.duration.as_secs_f64();
                     let elapsed_millis = stats.duration.as_millis();
@@ -161,18 +193,18 @@ fn main() {
                     if name.eq_ignore_ascii_case("multipv") {
                         if let Ok(n) = value.parse::<usize>() {
                             println!("{}", n);
-                            state.multipv = n.max(1).min(5);
+                            uci_state.multipv = n.max(1).min(5);
                         }
                     }
                 }
 
                 UciCommand::Stop => {
-                    state.stop.store(true, Ordering::Relaxed);
+                    uci_state.stop.store(true, Ordering::Relaxed);
                 }
 
                 UciCommand::Perft { depth } => {
                     let start = std::time::Instant::now();
-                    let nodes = perft(&state.position, depth);
+                    let nodes = perft(&engine_state.position, depth);
                     let elapsed = start.elapsed().as_millis();
                     let nps = (1000*nodes as u128 / elapsed) as u64;
 
