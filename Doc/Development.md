@@ -1,5 +1,8 @@
 # Engine Development Log
 
+
+## Version v04
+
 Formed a baseline.
 
 Version **v04** includes alpha beta search with a simple piece only eval + mobility + tempo bonus.
@@ -11,7 +14,7 @@ These are the results of v04 with check extensions vs v03 (mobility+tempo) vs v0
 
 ---
 
-## Results
+### Results
 
 | Rank | Name              | Elo | +/- | Games | Score  | Draw  |
 |------|-------------------|-----|-----|-------|--------|-------|
@@ -24,7 +27,7 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-## Player: v02
+#### Player: v02
 
 - "Draw by 3-fold repetition": 455  
 - "Draw by insufficient mating material": 2  
@@ -36,7 +39,7 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-## Player: v03
+#### Player: v03
 
 - "Draw by 3-fold repetition": 458  
 - "Draw by insufficient mating material": 3  
@@ -47,7 +50,7 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-## Player: v04-checkext
+#### Player: v04-checkext
 
 - "Draw by 3-fold repetition": 465  
 - "Draw by insufficient mating material": 1  
@@ -59,7 +62,8 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-/////////////////////////////////////////////////////////////////
+
+## Version v05
 
 Added pv move ordering and mvv-lva ordering.
 
@@ -79,7 +83,7 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-## Player: v04-checkext
+#### Player: v04-checkext
 
 - "Draw by 3-fold repetition": 473  
 - "Draw by insufficient mating material": 3  
@@ -90,7 +94,7 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-## Player: v05-pv
+#### Player: v05-pv
 
 - "Draw by 3-fold repetition": 473  
 - "Draw by insufficient mating material": 3  
@@ -101,7 +105,8 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-/////////////////////////////////////////////////////////////////
+
+## Version v06
 
 Added threefold repetition and 50 move rule because the amount of draws were getting out of hand and hard to look at.
 
@@ -121,7 +126,7 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-## Player: v06-repetition
+#### Player: v06-repetition
 
 - "Draw by 3-fold repetition": 153  
 - "Draw by fifty moves rule": 30  
@@ -133,7 +138,7 @@ SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 ---
 
-## Player: v05-betteruci
+#### Player: v05-betteruci
 
 - "Draw by 3-fold repetition": 153  
 - "Draw by fifty moves rule": 30  
