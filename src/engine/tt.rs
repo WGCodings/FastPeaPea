@@ -86,8 +86,14 @@ impl TranspositionTable {
         self.table[idx] = Some(entry);
     }
     pub fn clear(&mut self) {
-        self.table.clear();
         self.entries = 0;
+        unsafe {
+            std::ptr::write_bytes(
+                self.table.as_mut_ptr(),
+                0,
+                self.table.len(),
+            );
+        }
     }
     pub fn tt_occupancy(&self) -> u32 {
         let used = self.entries as f64;
