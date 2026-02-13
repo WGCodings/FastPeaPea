@@ -1,14 +1,14 @@
 mod engine;
 mod uci;
 
+use std::cmp;
 use std::io::{self, BufRead};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use shakmaty::{perft, Chess, Color, Position};
-
 use crate::uci::{parser::*, state::*};
-use crate::engine::search::search::search;
+use crate::engine::search::search::{search, SearchStats};
 use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::search::context::*;
@@ -31,13 +31,17 @@ fn main() {
 
         let ordering = MoveOrdering::new(&params.piece_values);
 
-        let mut ctx = SearchContext::new(&params, &ordering,multipv);
+        let engine_state = EngineState::new(128);
+        let mut tt = engine_state.tt;
+
+        let mut ctx = SearchContext::new(&params, &ordering,multipv,&mut tt);
 
         let score = search(&pos, &mut ctx, max_depth, Some(time_remaining));
 
         let best_move = ctx.pv.best_move().unwrap();
         let stats = ctx.stats;
         let multipv_lines = ctx.multipv;
+        let tt_occupancy = ctx.tt.tt_occupancy();
 
 
         println!("Best move: {:?}", move_to_uci(&best_move));
@@ -47,8 +51,10 @@ fn main() {
         println!("NPS: {:.0}", stats.nodes as f64 / stats.duration.as_secs_f64());
         println!("Seldepth: {}", stats.seldepth);
         println!("Average depth: {:.2}", stats.depth_sum / stats.depth_samples);
+        println!("TT occupancy: {:.0}", tt_occupancy);
         println!("\nMultiPV:");
-        for (i, (score, line)) in multipv_lines.lines.iter().enumerate() {
+        let multi_pv_lines = &multipv_lines.lines;
+        for (i, (score, line)) in multi_pv_lines.iter().enumerate() {
             print!("{}: score {:.2} pv", i + 1, score);
             for mv in line {
                 print!(" {}", move_to_uci(mv));
@@ -58,7 +64,7 @@ fn main() {
     } else {
         let stdin = io::stdin();
         let mut uci_state = UciState::new();
-        let mut engine_state = EngineState::new();
+        let mut engine_state = EngineState::new(128);
         let params = Params::default();
 
         for line in stdin.lock().lines() {
@@ -76,21 +82,23 @@ fn main() {
                 UciCommand::IsReady => println!("readyok"),
 
                 UciCommand::UciNewGame => {
-                    uci_state.position = Chess::default();
-                    engine_state.position = Chess::default();
+                    uci_state.position = Chess::new();
+                    engine_state.position = Chess::new();
+                    engine_state.tt.clear();
+                    engine_state.repetition_stack.clear();
                 }
 
                 UciCommand::Position { fen, moves } => {
                     if let Some(fen) = fen {
                         engine_state.position = read_position_from_fen(&fen).unwrap();
                     } else {
-                        engine_state.position = Chess::default();
+                        engine_state.position = Chess::new();
                     }
                     engine_state.init_history();
 
                     for mv in moves {
                         let m = uci_to_move(&engine_state.position, &mv);
-                        engine_state.position.play_unchecked(&m);
+                        engine_state.position.play_unchecked(m);
                         engine_state.increase_history();
                     }
                 }
@@ -136,15 +144,16 @@ fn main() {
                     };
 
                     let ordering = MoveOrdering::new(&params.piece_values);
-                    let repetition_stack = engine_state.repetition_stack.clone();
+                    let repetition_stack = &engine_state.repetition_stack;
 
                     let mut ctx = SearchContext {
                         params: &params,
                         ordering: &ordering,
                         pv: PvTable::new(64),
-                        stats: Default::default(),
+                        stats: SearchStats::default(),
                         multipv: MultiPv::new(uci_state.multipv),
-                        repetition_stack,
+                        repetition_stack: repetition_stack.to_vec(),
+                        tt: &mut engine_state.tt,
                     };
 
                     let _score = search(
@@ -157,6 +166,7 @@ fn main() {
                     let stats = ctx.stats;
                     let multipv_lines = ctx.multipv;
                     let best_move = ctx.pv.best_move().unwrap();
+                    let tt_occupancy = ctx.tt.tt_occupancy();
 
 
                     let elapsed = stats.duration.as_secs_f64();
@@ -167,20 +177,21 @@ fn main() {
                     } else {
                         0
                     };
-
+                    let multi_pv_lines = &multipv_lines.lines;
                     for (i, (score, line)) in
-                        multipv_lines.lines.iter().enumerate()
+                        multi_pv_lines.iter().enumerate()
                     {
                         let pv_string = pv_to_string(line);
 
                         println!(
-                            "info depth {:.0} seldepth {} multipv {} score cp {} nodes {} nps {} time {} pv {}",
+                            "info depth {:.0} seldepth {} multipv {} score cp {} nodes {} nps {} hashfull {} time {} pv {}",
                             line.len(),
                             stats.seldepth,
                             i + 1,
                             score,
                             stats.nodes,
                             nps,
+                            tt_occupancy,
                             elapsed_millis,
                             pv_string
                         );
@@ -190,10 +201,10 @@ fn main() {
                 }
 
                 UciCommand::SetOption { name, value } => {
-                    if name.eq_ignore_ascii_case("multipv") {
-                        if let Ok(n) = value.parse::<usize>() {
+                    if name.as_str().eq_ignore_ascii_case("multipv") {
+                        if let Ok(n) = value.as_str().parse::<usize>() {
                             println!("{}", n);
-                            uci_state.multipv = n.max(1).min(5);
+                            uci_state.multipv = cmp::min(cmp::max(n,1),5);
                         }
                     }
                 }
@@ -227,7 +238,7 @@ fn pv_to_string(line: &[shakmaty::Move]) -> String {
 
     for mv in line {
         s.push(' ');
-        s.push_str(&move_to_uci(mv));
+        s.push_str(move_to_uci(mv).as_str());
     }
 
     s

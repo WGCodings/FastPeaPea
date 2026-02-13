@@ -9,8 +9,8 @@ pub struct Params {
     pub tempo_bonus: f32
 }
 
-impl Default for Params {
-    fn default() -> Self {
+impl Params {
+    pub fn default() -> Self {
         Self {
             piece_values: [100.0, 320.0, 330.0, 500.0, 900.0, 0.0], // P, N, B, R, Q, K
             _pst: [[0.0; 64]; 6], // initialize later or fill with tuning values

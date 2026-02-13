@@ -26,6 +26,7 @@ impl MoveOrdering {
         &self,
         pos: &Chess,
         pv_move: Option<&Move>,
+        tt_move: Option<&Move>,
         moves: &mut MoveList,
     ) {
         // 1. PV move first
@@ -35,17 +36,25 @@ impl MoveOrdering {
             }
         }
 
-        // 2. Partition captures / quiets
+        // 2. TT move second (if not same as PV)
+        if let Some(tt) = tt_move {
+            if Some(tt) != pv_move {
+                if let Some(idx) = moves.iter().position(|m| m == tt) {
+                    let insert = if pv_move.is_some() { 1 } else { 0 };
+                    moves.swap(insert, idx);
+                }
+            }
+        }
+
         let (mut captures, quiets): (Vec<_>, Vec<_>) =
             moves.drain(..).partition(|mv| mv.is_capture());
 
-        // 3. Order captures by MVV-LVA
         self.order_captures(pos, &mut captures);
 
-        // 4. Rebuild move list
         moves.extend(captures);
         moves.extend(quiets);
     }
+
 
 
     #[inline(always)]

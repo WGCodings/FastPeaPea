@@ -14,7 +14,7 @@ pub struct UciState {
 impl UciState {
     pub fn new() -> Self {
         Self {
-            position: Chess::default(),
+            position: Chess::new(),
             _wtime: 0,
             _btime: 0,
             _winc: 0,

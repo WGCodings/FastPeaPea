@@ -5,6 +5,7 @@ use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::search::pv::{MultiPv, PvTable};
 use crate::engine::search::search::SearchStats;
+use crate::engine::tt::TranspositionTable;
 
 pub struct SearchContext<'a> {
     pub params: &'a Params,
@@ -13,6 +14,7 @@ pub struct SearchContext<'a> {
     pub stats: SearchStats,
     pub multipv: MultiPv,
     pub repetition_stack: Vec<u64>,
+    pub tt: &'a mut TranspositionTable,
 }
 
 impl<'a> SearchContext<'a> {
@@ -20,6 +22,7 @@ impl<'a> SearchContext<'a> {
         params: &'a Params,
         ordering: &'a MoveOrdering,
         multipv_count: usize,
+        tt: &'a mut TranspositionTable,
     ) -> Self {
         Self {
             params,
@@ -28,14 +31,20 @@ impl<'a> SearchContext<'a> {
             stats: SearchStats::default(),
             multipv: MultiPv::new(multipv_count),
             repetition_stack: Vec::with_capacity(256),
+            tt ,
         }
     }
     #[inline(always)]
-    pub fn is_threefold(&self,pos: &Chess) -> bool {
+    pub fn is_threefold(&mut self, pos: &Chess) -> bool {
 
         let mut count = 0;
-        let current = *self.repetition_stack.last().unwrap();
+
+        let current = self.repetition_stack.last().unwrap_or(&0);
         let len = self.repetition_stack.len();
+
+        if len == 0{
+            return false;
+        }
 
         // Avoid underflow
         let start = len.saturating_sub(pos.halfmoves() as usize + 1);
@@ -43,7 +52,7 @@ impl<'a> SearchContext<'a> {
         // Scan backwards skipping last position
         for &hash in self.repetition_stack[start..len-1].iter().rev() {
 
-            if hash == current {
+            if hash == *current {
                 count += 1;
                 if count >= 2 {
                     return true; // 3-fold repetition
