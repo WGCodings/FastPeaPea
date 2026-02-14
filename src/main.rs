@@ -6,7 +6,8 @@ use std::io::{self, BufRead};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use shakmaty::{perft, Chess, Color, Position};
+use shakmaty::{perft, Chess, Color, EnPassantMode, Position};
+use shakmaty::zobrist::Zobrist64;
 use crate::uci::{parser::*, state::*};
 use crate::engine::search::search::{search, SearchStats};
 use crate::engine::params::Params;
@@ -32,9 +33,10 @@ fn main() {
         let ordering = MoveOrdering::new(&params.piece_values);
 
         let engine_state = EngineState::new(128);
+        let hash = pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
         let mut tt = engine_state.tt;
 
-        let mut ctx = SearchContext::new(&params, &ordering,multipv,&mut tt);
+        let mut ctx = SearchContext::new(&params, &ordering,multipv,&mut tt,hash);
 
         let score = search(&pos, &mut ctx, max_depth, Some(time_remaining));
 
@@ -145,6 +147,7 @@ fn main() {
 
                     let ordering = MoveOrdering::new(&params.piece_values);
                     let repetition_stack = &engine_state.repetition_stack;
+                    let hash = engine_state.position.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
 
                     let mut ctx = SearchContext {
                         params: &params,
@@ -154,6 +157,7 @@ fn main() {
                         multipv: MultiPv::new(uci_state.multipv),
                         repetition_stack: repetition_stack.to_vec(),
                         tt: &mut engine_state.tt,
+                        hash
                     };
 
                     let _score = search(

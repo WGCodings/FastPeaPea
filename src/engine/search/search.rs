@@ -121,9 +121,12 @@ fn negamax(
         let mut child_pos = pos.clone();
 
         child_pos.play_unchecked(mv);
+
+
         let hash_child = child_pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
 
         ctx.increase_history(hash_child);
+
 
         let score = -negamax(&child_pos, ctx, depth - 1, ply + 1, -beta, -alpha);
 

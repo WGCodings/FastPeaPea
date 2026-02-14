@@ -15,6 +15,7 @@ pub struct SearchContext<'a> {
     pub multipv: MultiPv,
     pub repetition_stack: Vec<u64>,
     pub tt: &'a mut TranspositionTable,
+    pub hash : u64,
 }
 
 impl<'a> SearchContext<'a> {
@@ -23,6 +24,7 @@ impl<'a> SearchContext<'a> {
         ordering: &'a MoveOrdering,
         multipv_count: usize,
         tt: &'a mut TranspositionTable,
+        hash : u64
     ) -> Self {
         Self {
             params,
@@ -32,6 +34,7 @@ impl<'a> SearchContext<'a> {
             multipv: MultiPv::new(multipv_count),
             repetition_stack: Vec::with_capacity(256),
             tt ,
+            hash,
         }
     }
     #[inline(always)]
