@@ -256,43 +256,23 @@ impl Accumulator {
     }
 
     /// Add a feature to an accumulator.
-    #[cfg(not(target_feature = "avx2"))]
     pub fn add_feature(&mut self, feature_idx: usize, net: &Network) {
         for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx].vals) {
             *i += *d
         }
     }
 
-    /// Remove a feature from an accumulator.
-     #[cfg(not(target_feature = "avx2"))]
-    pub fn remove_feature(&mut self, feature_idx: usize, net: &Network) {
-        for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx].vals) {
-            *i -= *d
-        }
-    }
-    #[cfg(target_feature = "avx2")]
-    pub fn add_feature(&mut self, feature_idx: usize, net: &Network) {
-        unsafe {
-            let src = net.feature_weights[feature_idx].vals.as_ptr();
-            let dst = self.vals.as_mut_ptr();
-            for i in (0..HIDDEN_SIZE).step_by(16) {
-                let a = _mm256_load_si256(dst.add(i) as *const __m256i);
-                let b = _mm256_load_si256(src.add(i) as *const __m256i);
-                let sum = _mm256_add_epi16(a, b);
-                _mm256_store_si256(dst.add(i) as *mut __m256i, sum);
+    /// Combine remove and add features per move into a list and do them in one go instead as one per one.
+    pub fn apply_feature_updates(&mut self, adds: &[usize], removes: &[usize], net: &Network) {
+
+        for &idx in adds {
+            for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx].vals) {
+                *i += *d
             }
         }
-    }
-    #[cfg(target_feature = "avx2")]
-    pub fn remove_feature(&mut self, feature_idx: usize, net: &Network) {
-        unsafe {
-            let src = net.feature_weights[feature_idx].vals.as_ptr();
-            let dst = self.vals.as_mut_ptr();
-            for i in (0..HIDDEN_SIZE).step_by(16) {
-                let a = _mm256_load_si256(dst.add(i) as *const __m256i);
-                let b = _mm256_load_si256(src.add(i) as *const __m256i);
-                let diff = _mm256_sub_epi16(a, b);
-                _mm256_store_si256(dst.add(i) as *mut __m256i, diff);
+        for &idx in removes {
+            for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx].vals) {
+                *i -= *d
             }
         }
     }
