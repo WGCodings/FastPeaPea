@@ -146,8 +146,21 @@ impl<'a> SearchContext<'a> {
 // KEEP TRACK OF CHANGES TO ACCUMULATOR DURING MAKE MOVE                                                                //
 // =====================================================================================================================//
 pub struct AccumulatorDelta {
-    removed: Vec<(usize, usize)>, // (us_idx, them_idx)
-    added: Vec<(usize, usize)>,
+    removed: [(usize, usize); 2],
+    added:   [(usize, usize); 2],
+    n_removed: u8,
+    n_added: u8,
+}
+
+impl Default for AccumulatorDelta {
+    fn default() -> Self {
+        Self {
+            removed: [(0, 0); 2],
+            added: [(0, 0); 2],
+            n_removed: 0,
+            n_added: 0,
+        }
+    }
 }
 
 // =====================================================================================================================//
@@ -180,22 +193,31 @@ pub fn unmake_move_nnue(
     net: &Network,
     state: &mut NNUEState,
 ) {
-    // swap back first
     std::mem::swap(&mut state.us, &mut state.them);
 
     let delta = state.stack.pop().unwrap();
 
-    for (us_idx, them_idx) in delta.added {
-        state.us.remove_feature(us_idx, net);
-        state.them.remove_feature(them_idx, net);
-    }
+    let mut us_add = [0usize; 2];
+    let mut us_rem = [0usize; 2];
+    let mut them_add = [0usize; 2];
+    let mut them_rem = [0usize; 2];
 
-    for (us_idx, them_idx) in delta.removed {
-        state.us.add_feature(us_idx, net);
-        state.them.add_feature(them_idx, net);
+    // get unmake information from stack
+    for i in 0..delta.n_added as usize {
+        let (us_idx, them_idx) = delta.added[i];
+        us_rem[i] = us_idx;
+        them_rem[i] = them_idx;
     }
-
+    for i in 0..delta.n_removed as usize {
+        let (us_idx, them_idx) = delta.removed[i];
+        us_add[i] = us_idx;
+        them_add[i] = them_idx;
+    }
+    // Apply updates to accumulator
+    state.us.apply_feature_updates(&us_add[..delta.n_removed as usize], &us_rem[..delta.n_added as usize], net);
+    state.them.apply_feature_updates(&them_add[..delta.n_removed as usize], &them_rem[..delta.n_added as usize], net);
 }
+
 #[inline(always)]
 pub fn make_move_nnue<P: Position>(
     pos: &P,
@@ -203,10 +225,13 @@ pub fn make_move_nnue<P: Position>(
     net: &Network,
     state: &mut NNUEState,
 ) {
-    let mut delta = AccumulatorDelta {
-        removed: Vec::with_capacity(4),
-        added: Vec::with_capacity(4),
-    };
+    let mut delta = AccumulatorDelta::default();
+
+    // record all changes to accumulator inside these lists to apply them fused later
+    let mut us_add = [0usize; 2];
+    let mut us_rem = [0usize; 2];
+    let mut them_add = [0usize; 2];
+    let mut them_rem = [0usize; 2];
 
     let perspective = pos.turn();
     let board = pos.board();
@@ -216,49 +241,32 @@ pub fn make_move_nnue<P: Position>(
         // ============================================================
         // NORMAL MOVE (may include capture + promotion)
         // ============================================================
-
-        Move::Normal { from, to, promotion,.. } => {
-
+        Move::Normal { from, to, promotion, .. } => {
             let piece = board.piece_at(from).unwrap();
             let side = if piece.color == Color::White { 0 } else { 1 };
             let from_sq = from.to_usize();
             let to_sq = to.to_usize();
-
             let piece_type = role_index(piece.role);
 
-            // --- remove moving piece from origin ---
-            remove_feature_pair(
-                state, net, &mut delta,
-                side, from_sq, piece_type, perspective
-            );
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective);
 
-            // --- handle capture (if any) ---
             if let Some(captured) = board.piece_at(to) {
                 let cap_side = if captured.color == Color::White { 0 } else { 1 };
                 let cap_type = role_index(captured.role);
 
-                remove_feature_pair(
-                    state, net, &mut delta,
-                    cap_side, to_sq, cap_type, perspective
-                );
+                remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, to_sq, cap_type, perspective);
             }
 
-            // --- add moved piece (promotion-aware) ---
             let final_role = promotion.unwrap_or(piece.role);
             let final_type = role_index(final_role);
 
-            add_feature_pair(
-                state, net, &mut delta,
-                side, to_sq, final_type, perspective
-            );
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, final_type, perspective);
         }
 
         // ============================================================
         // EN PASSANT
         // ============================================================
-
         Move::EnPassant { from, to } => {
-
             let piece = board.piece_at(from).unwrap();
             let side = if piece.color == Color::White { 0 } else { 1 };
 
@@ -266,101 +274,58 @@ pub fn make_move_nnue<P: Position>(
             let to_sq = to.to_usize();
             let piece_type = role_index(Role::Pawn);
 
-            // remove moving pawn
-            remove_feature_pair(
-                state, net, &mut delta,
-                side, from_sq, piece_type, perspective
-            );
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective);
 
-            // remove captured pawn (behind target square)
             let captured_sq = Square::from_coords(to.file(), from.rank());
             let cap_sq = captured_sq.to_usize();
-
             let cap_side = 1 - side;
 
-            remove_feature_pair(
-                state, net, &mut delta,
-                cap_side, cap_sq, piece_type, perspective
-            );
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, cap_sq, piece_type, perspective);
 
-            // add pawn to target square
-            add_feature_pair(
-                state, net, &mut delta,
-                side, to_sq, piece_type, perspective
-            );
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, piece_type, perspective);
         }
 
         // ============================================================
         // CASTLING
         // ============================================================
-
         Move::Castle { king, rook } => {
-
             let piece = board.piece_at(king).unwrap();
             let side = if piece.color == Color::White { 0 } else { 1 };
 
             let king_from = king.to_usize();
             let rook_from = rook.to_usize();
-
-            // determine side of castle
             let kingside = rook.file() > king.file();
 
-            let king_to = if kingside {
-                king_from + 2
-            } else {
-                king_from - 2
-            };
-
-            let rook_to = if kingside {
-                king_from + 1
-            } else {
-                king_from - 1
-            };
+            let king_to = if kingside { king_from + 2 } else { king_from - 2 };
+            let rook_to = if kingside { king_from + 1 } else { king_from - 1 };
 
             let king_type = role_index(Role::King);
             let rook_type = role_index(Role::Rook);
 
-            // remove king
-            remove_feature_pair(
-                state, net, &mut delta,
-                side, king_from, king_type, perspective
-            );
-
-            // remove rook
-            remove_feature_pair(
-                state, net, &mut delta,
-                side, rook_from, rook_type, perspective
-            );
-
-            // add king
-            add_feature_pair(
-                state, net, &mut delta,
-                side, king_to, king_type, perspective
-            );
-
-            // add rook
-            add_feature_pair(
-                state, net, &mut delta,
-                side, rook_to, rook_type, perspective
-            );
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, king_from, king_type, perspective);
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, rook_from, rook_type, perspective);
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, king_to, king_type, perspective);
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, rook_to, rook_type, perspective);
         }
         _ => {}
     }
+
+    // Apply all fused updates to accumulator at once
+    state.us.apply_feature_updates(&us_add[..delta.n_added as usize], &us_rem[..delta.n_removed as usize], net);
+    state.them.apply_feature_updates(&them_add[..delta.n_added as usize], &them_rem[..delta.n_removed as usize], net);
+
     state.stack.push(delta);
-    // swap accumulators (side to move changes)
     std::mem::swap(&mut state.us, &mut state.them);
-
-
 }
 
 // =====================================================================================================================//
-// HELPER FUNCTION TO ACTIVATE AND DEACTIVATE FEATURES                                                                  //
+// HELPER FUNCTION TO ACTIVATE AND DEACTIVATE FEATURES INTO FUSED UPDATES                                               //
 // =====================================================================================================================//
 
-fn remove_feature_pair(
-    state: &mut NNUEState,
-    net: &Network,
+fn remove_feature(
     delta: &mut AccumulatorDelta,
+    us_rem: &mut [usize; 2],
+    them_rem: &mut [usize; 2],
     side: usize,
     sq: usize,
     piece_type: usize,
@@ -369,16 +334,17 @@ fn remove_feature_pair(
     let us_idx = calculate_index(side, sq, piece_type, perspective);
     let them_idx = calculate_index(side, sq, piece_type, !perspective);
 
-    state.us.remove_feature(us_idx, net);
-    state.them.remove_feature(them_idx, net);
-
-    delta.removed.push((us_idx, them_idx));
+    let n = delta.n_removed as usize;
+    us_rem[n] = us_idx;
+    them_rem[n] = them_idx;
+    delta.removed[n] = (us_idx, them_idx);
+    delta.n_removed += 1;
 }
 
-fn add_feature_pair(
-    state: &mut NNUEState,
-    net: &Network,
+fn add_feature(
     delta: &mut AccumulatorDelta,
+    us_add: &mut [usize; 2],
+    them_add: &mut [usize; 2],
     side: usize,
     sq: usize,
     piece_type: usize,
@@ -387,10 +353,11 @@ fn add_feature_pair(
     let us_idx = calculate_index(side, sq, piece_type, perspective);
     let them_idx = calculate_index(side, sq, piece_type, !perspective);
 
-    state.us.add_feature(us_idx, net);
-    state.them.add_feature(them_idx, net);
-
-    delta.added.push((us_idx, them_idx));
+    let n = delta.n_added as usize;
+    us_add[n] = us_idx;
+    them_add[n] = them_idx;
+    delta.added[n] = (us_idx, them_idx);
+    delta.n_added += 1;
 }
 
 
