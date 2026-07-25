@@ -221,16 +221,20 @@ pub fn unmake_move_nnue(net: &Network, state: &mut NNUEState) {
 
 #[inline(always)]
 pub fn make_null_move_nnue(state: &mut NNUEState) {
-    let mut delta = AccumulatorDelta::default();
-    delta.is_clean = true;
+    let delta = AccumulatorDelta::default();
+
     state.stack.push(delta);
-    std::mem::swap(&mut state.us, &mut state.them);
+    //std::mem::swap(&mut state.us, &mut state.them);
 }
 
 #[inline(always)]
 pub fn unmake_null_move_nnue(state: &mut NNUEState) {
-    state.stack.pop();
-    std::mem::swap(&mut state.us, &mut state.them);
+    let delta = state.stack.pop().unwrap();
+
+    if delta.is_clean {
+        std::mem::swap(&mut state.us, &mut state.them);
+    }
+
 }
 
 #[inline(always)]

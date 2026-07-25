@@ -256,7 +256,7 @@ pub fn negamax(
 
         reduction = reduction.clamp(1,depth);
 
-       make_null_move_nnue(&mut ctx.nnue);
+        make_null_move_nnue(&mut ctx.nnue);
 
         let child_pos = pos.clone().swap_turn().unwrap();
 
