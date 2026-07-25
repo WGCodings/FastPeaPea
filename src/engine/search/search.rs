@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use shakmaty::{Bitboard, Chess, EnPassantMode, Move, Position};
 use shakmaty::zobrist::{Zobrist64};
 use crate::engine::eval::evaluate;
-use crate::engine::search::context::{make_move_nnue, unmake_move_nnue, SearchContext};
+use crate::engine::search::context::{make_move_nnue, make_null_move_nnue, unmake_move_nnue, unmake_null_move_nnue, SearchContext};
 use crate::engine::search::pv::PvTable;
 use crate::engine::search::see::see;
 use crate::engine::time_manager::TimeManager;
@@ -189,7 +189,7 @@ pub fn negamax(
     } else if let Some(e) = &tt_entry {
         e.eval
     } else {
-        let eval = evaluate(pos, ctx.network, &ctx.nnue.us, &ctx.nnue.them);
+        let eval = evaluate(pos, ctx.network, &mut ctx.nnue);
         tt_store(hash, ctx, depth, MIN_INF, eval, Bound::Upper, None ,ply);
         eval
 
@@ -256,7 +256,7 @@ pub fn negamax(
 
         reduction = reduction.clamp(1,depth);
 
-        std::mem::swap(&mut ctx.nnue.us, &mut ctx.nnue.them);
+       make_null_move_nnue(&mut ctx.nnue);
 
         let child_pos = pos.clone().swap_turn().unwrap();
 
@@ -267,7 +267,8 @@ pub fn negamax(
 
         //TODO add verification
 
-        std::mem::swap(&mut ctx.nnue.us, &mut ctx.nnue.them);
+        unmake_null_move_nnue(&mut ctx.nnue);
+
         ctx.decrease_history();
 
         if (*ctx.stop).load(Ordering::Relaxed){ return DRAW_SCORE;}
@@ -383,7 +384,7 @@ pub fn negamax(
 
             // TODO try skip if child pos is in check
 
-            make_move_nnue(pos, &mv, ctx.network, &mut ctx.nnue);
+            make_move_nnue(pos, &mv, &mut ctx.nnue);
 
             ctx.stack.moves[ply] = Some(mv);
 
@@ -590,7 +591,7 @@ pub fn negamax(
 
 
 
-        make_move_nnue(pos, &mv, ctx.network, &mut ctx.nnue);
+        make_move_nnue(pos, &mv, &mut ctx.nnue);
 
         let hash_child = child_pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
 
@@ -761,7 +762,7 @@ pub fn quiescence(
     else if let Some(entry) = &tt_entry {
         entry.eval
     } else {
-        let eval = evaluate(pos, ctx.network, &ctx.nnue.us, &ctx.nnue.them);
+        let eval = evaluate(pos, ctx.network, &mut ctx.nnue);
         //tt_store(hash, ctx, 0, MIN_INF, eval, Bound::Upper, None ,ply);
         eval
 
@@ -801,7 +802,7 @@ pub fn quiescence(
             continue;
         }
 
-        make_move_nnue(pos, &mv, ctx.network, &mut ctx.nnue);
+        make_move_nnue(pos, &mv, &mut ctx.nnue);
 
         let mut child = pos.clone();
 
