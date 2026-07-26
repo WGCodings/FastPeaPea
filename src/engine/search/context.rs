@@ -145,20 +145,23 @@ impl<'a> SearchContext<'a> {
 // =====================================================================================================================//
 // KEEP TRACK OF CHANGES TO ACCUMULATOR DURING MAKE MOVE                                                                //
 // =====================================================================================================================//
+#[derive(Clone, Copy)]
 pub struct AccumulatorDelta {
     removed: [(usize, usize); 2],
     added:   [(usize, usize); 2],
     n_removed: u8,
     n_added: u8,
+    is_clean : bool
 }
 
-impl Default for AccumulatorDelta {
+impl AccumulatorDelta {
     fn default() -> Self {
         Self {
             removed: [(0, 0); 2],
             added: [(0, 0); 2],
             n_removed: 0,
             n_added: 0,
+            is_clean: false,
         }
     }
 }
@@ -189,40 +192,99 @@ impl NNUEState {
 // =====================================================================================================================//
 
 #[inline(always)]
-pub fn unmake_move_nnue(
-    net: &Network,
-    state: &mut NNUEState,
-) {
-    std::mem::swap(&mut state.us, &mut state.them);
-
+pub fn unmake_move_nnue(net: &Network, state: &mut NNUEState) {
     let delta = state.stack.pop().unwrap();
 
-    let mut us_add = [0usize; 2];
-    let mut us_rem = [0usize; 2];
-    let mut them_add = [0usize; 2];
-    let mut them_rem = [0usize; 2];
+    // No need to do anything if the accumulator delta is not clean
+    if delta.is_clean {
+        std::mem::swap(&mut state.us, &mut state.them);
 
-    // get unmake information from stack
-    for i in 0..delta.n_added as usize {
-        let (us_idx, them_idx) = delta.added[i];
-        us_rem[i] = us_idx;
-        them_rem[i] = them_idx;
+        let mut us_add = [0usize; 2];
+        let mut us_rem = [0usize; 2];
+        let mut them_add = [0usize; 2];
+        let mut them_rem = [0usize; 2];
+
+        for k in 0..delta.n_added as usize {
+            us_rem[k] = delta.added[k].0;
+            them_rem[k] = delta.added[k].1;
+        }
+        for k in 0..delta.n_removed as usize {
+            us_add[k] = delta.removed[k].0;
+            them_add[k] = delta.removed[k].1;
+        }
+
+        state.us.apply_feature_updates(&us_add[..delta.n_removed as usize], &us_rem[..delta.n_added as usize], net);
+        state.them.apply_feature_updates(&them_add[..delta.n_removed as usize], &them_rem[..delta.n_added as usize], net);
     }
-    for i in 0..delta.n_removed as usize {
-        let (us_idx, them_idx) = delta.removed[i];
-        us_add[i] = us_idx;
-        them_add[i] = them_idx;
-    }
-    // Apply updates to accumulator
-    state.us.apply_feature_updates(&us_add[..delta.n_removed as usize], &us_rem[..delta.n_added as usize], net);
-    state.them.apply_feature_updates(&them_add[..delta.n_removed as usize], &them_rem[..delta.n_added as usize], net);
+
 }
+
+#[inline(always)]
+pub fn make_null_move_nnue(state: &mut NNUEState) {
+    let delta = AccumulatorDelta::default();
+
+    state.stack.push(delta);
+    //std::mem::swap(&mut state.us, &mut state.them);
+}
+
+#[inline(always)]
+pub fn unmake_null_move_nnue(state: &mut NNUEState) {
+    let delta = state.stack.pop().unwrap();
+
+    if delta.is_clean {
+        std::mem::swap(&mut state.us, &mut state.them);
+    }
+
+}
+
+#[inline(always)]
+/// Loop over the accumulator delta stack until you find a clean one. Then do incremental updates from that point back to the current accumulator.
+pub fn clean_accumulator(
+    net: &Network,
+    state: &mut NNUEState){
+
+    let mut start = state.stack.len();
+    while start > 0 && !state.stack[start - 1].is_clean {
+        start -= 1;
+    }
+
+    // loop over acc stack to apply all dirty updates
+    for i in start..state.stack.len() {
+
+
+        let delta = state.stack[i];
+
+        let mut us_add = [0usize; 2];
+        let mut us_rem = [0usize; 2];
+        let mut them_add = [0usize; 2];
+        let mut them_rem = [0usize; 2];
+
+        for k in 0..delta.n_added as usize {
+            us_add[k] = delta.added[k].0;
+            them_add[k] = delta.added[k].1;
+        }
+        for k in 0..delta.n_removed as usize {
+            us_rem[k] = delta.removed[k].0;
+            them_rem[k] = delta.removed[k].1;
+        }
+
+        state.us.apply_feature_updates(&us_add[..delta.n_added as usize], &us_rem[..delta.n_removed as usize], net);
+        state.them.apply_feature_updates(&them_add[..delta.n_added as usize], &them_rem[..delta.n_removed as usize], net);
+
+        // if applied, it is clean
+        state.stack[i].is_clean = true;
+        std::mem::swap(&mut state.us, &mut state.them);
+        }
+    }
+
+
+
+
 
 #[inline(always)]
 pub fn make_move_nnue<P: Position>(
     pos: &P,
     mv: &Move,
-    net: &Network,
     state: &mut NNUEState,
 ) {
     let mut delta = AccumulatorDelta::default();
@@ -311,12 +373,14 @@ pub fn make_move_nnue<P: Position>(
     }
 
     // Apply all fused updates to accumulator at once
-    state.us.apply_feature_updates(&us_add[..delta.n_added as usize], &us_rem[..delta.n_removed as usize], net);
-    state.them.apply_feature_updates(&them_add[..delta.n_added as usize], &them_rem[..delta.n_removed as usize], net);
+    //state.us.apply_feature_updates(&us_add[..delta.n_added as usize], &us_rem[..delta.n_removed as usize], net);
+    //state.them.apply_feature_updates(&them_add[..delta.n_added as usize], &them_rem[..delta.n_removed as usize], net);
 
     state.stack.push(delta);
-    std::mem::swap(&mut state.us, &mut state.them);
+    //std::mem::swap(&mut state.us, &mut state.them);
 }
+
+
 
 // =====================================================================================================================//
 // HELPER FUNCTION TO ACTIVATE AND DEACTIVATE FEATURES INTO FUSED UPDATES                                               //

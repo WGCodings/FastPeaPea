@@ -1,14 +1,18 @@
 use std::cmp::max;
 use shakmaty::{Bitboard, Chess, Color, Position, Role, Square};
+use crate::engine::search::context::{clean_accumulator, NNUEState};
 use crate::engine::types::{KBN_TABLE_DARK, KBN_TABLE_LIGHT, MATE_SCORE};
-use crate::nnue::network::{Accumulator, Network};
+use crate::nnue::network::{accumulators_from_position, Network};
 
 // =====================================================================================================================//
 // EVALUATE NNUE + MOPUP                                                                                                //
 // =====================================================================================================================//
-pub fn evaluate(pos: &Chess, net: &Network,us: &Accumulator, them: &Accumulator) -> i32 {
-    let nnue_score= net.evaluate(us,them,pos);
+pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
 
+    clean_accumulator(net, state);
+
+    let nnue_score= net.evaluate(&state.us, &state.them, pos);
+    
 
     let mopup_score = mopup_evaluation(pos,nnue_score);
 
