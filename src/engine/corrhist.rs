@@ -12,7 +12,6 @@ pub trait CorrHistKey {
     fn key(pos: &Chess) -> usize;
 }
 
-// Shared struct - generic over the key strategy
 #[derive(Clone)]
 pub struct CorrectionHistoryTable<K: CorrHistKey> {
     pub(crate) table: Box<[[i32; SIZE]; 2]>,
@@ -35,7 +34,7 @@ impl<K: CorrHistKey> CorrectionHistoryTable<K>{
     }
 }
 
-// Make Corrhisttable for different keys - different  correction histories
+// Make Corrhisttable for different keys
 impl<K: CorrHistKey> CorrectionHistoryTable<K> {
 
     // Age entries, reduce importance

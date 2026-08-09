@@ -347,7 +347,6 @@ pub fn negamax(
     // =====================================================================================================================//
     // TODO optimise, filter captures from moves above and calculate SEE once
     // TODO experiment with parameters, maybe add improving heuristic later
-    // TODO add cutnode condition
 
     let probcut_beta = beta + ctx.params.pc_beta_margin - i32::from(improving) * ctx.params.pc_improving_margin;
 
@@ -382,6 +381,10 @@ pub fn negamax(
             child_pos.play_unchecked(mv);
 
             // TODO try skip if child pos is in check
+
+            if child_pos.is_check(){
+                continue;
+            }
 
             make_move_nnue(pos, &mv, &mut ctx.nnue);
 

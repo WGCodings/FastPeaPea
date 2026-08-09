@@ -188,11 +188,11 @@ For an Openbench account or other requests you can contact me by sending an emai
 - [X] Integration with OpenBench
 - [ ] Capture history
 - [ ] Fix missing PV lines due to cutoffs
-- [ ] Store evals in TT before recursive search
+- [x] Store evals in TT before recursive search
 - [x] Mate Distance Pruning
 - [ ] Threat moves and extensions in NMP
-- [ ] Probcut
-- [ ] Try improving heuristic in LMR
+- [x] Probcut
+- [x] Try improving heuristic in LMR
 - [ ] Contempt
 - [x] WDL normalization (#3)
 - [ ] Variable window choice in Asp Window
