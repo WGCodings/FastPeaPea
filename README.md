@@ -121,6 +121,7 @@ Below is a table of Elo estimates from having the engine play against other engi
 | v7.0 (Net 1) | 2850              | 2392                                                                    | 2739                                                                    | 2858                                                                         | /                                                            | /                                                        |
 | v8.0 (Net 0) | 2993              | 2507                                                                    | 2869                                                                    | 2996                                                                         | /                                                            | /                                                        |
 | v9.0 (Net 0) | 3193              | 2691                                                                    | 3027                                                                    | 3062                                                                         | 3264                                                         | 3223                                                     |
+| v9.1 (Net 0) | /                 | /                                                                       | /                                                                       | /                                                                            | /                                                            | /                                                        |
 ---
 
 
@@ -145,7 +146,7 @@ $env:RUSTFLAGS="-C target-cpu=native -C target-feature=+avx2,+bmi2"; cargo build
 
 The native build enables AVX2 and BMI2 instructions and runs noticeably faster. 
 
-**Simplest — Makefile:**
+**Simplest with Makefile:**
 
 ```bash
 # Makefile
@@ -200,6 +201,7 @@ For an Openbench account or other requests you can contact me by sending an emai
 ## Acknowledgements
 
 [Simbelmyne][simbelmyne] by Sam Roelants was a major source of inspiration and learning throughout this project. A lot of ideas and how to implement them in Rust came from there.
+For some more advanced ideas I also grateful to the authors of [viridithas][viridithas] and [akimbo][akimbo]. 
 Thanks to [Stockfish' WDL Model][StockFishWDLModel] I was able to normalize the eval score and provide WDL information for every position.
 Many thanks to Andy Grant for the [Openbench][Openbench] testing framework, with which testing is a real pleasure.
 
@@ -227,6 +229,8 @@ This project is licensed under the [GNU General Public License v3.0][license-lin
 <!-- Links -->
 [shakmaty]: https://github.com/niklasf/shakmaty
 [simbelmyne]: https://github.com/sroelants/simbelmyne
+[viridithas]: https://github.com/cosmobobak/viridithas
+[akimbo]: https://github.com/jw1912/akimbo
 [StockFishWDLModel]: https://github.com/official-stockfish/WDL_model
 [Openbench]: https://github.com/AndyGrant/OpenBench
 [stash]: https://gitlab.com/mhouppin/stash-bot
