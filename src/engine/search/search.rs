@@ -360,6 +360,7 @@ pub fn negamax(
         && !is_mate_score(beta)
         && do_probcut
         && cut_node
+        && false
     {
         let probcut_depth = (depth - 3 - ((static_eval-beta)/ctx.params.pc_depth_divisor) as usize)
             .clamp(0,ctx.params.pc_min_depth as usize)
