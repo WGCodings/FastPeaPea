@@ -18,8 +18,8 @@
 
 ## About
 
-This project started as a way to get familiar with Rust around two years go — and then, as these things tend to go, it got a little bit out of hand. 
-What began as tinkering with search algorithms has grown into a reasonably capable chess engine with NNUE evaluation, multithreading, and pondering support.
+This project started as a way to get familiar with Rust around two years go and then, as these things tend to go, it got a little bit out of hand. 
+What began as tinkering with search algorithms has grown into a reasonably capable chess engine with NNUE evaluation, multithreading,etc.
 This is currently my third attempt to make a chess engine and again I should've done a lot of things differently, but I think it is at a stage where it is release worthy.
 
 Move generation and board representation are handled by the [shakmaty][shakmaty] library. 
@@ -30,17 +30,6 @@ I'm currently training two NNUEs from scratch. One with  (768 -> 1536)x2 -> 1x8 
 (768 -> 64)x2 -> 1 (Net 1). For more information about this progression see the CHANGELOG.md. 
 Net 0 will be my main network that will be used in all the future releases and Net 1 will be my experimental network.
 You can play the latest generations of my networks on lichess : [Net 0][lichess-link0], [Net 1][lichess-link1].
-
-The plot below shows the training progression over the generations with error bars:
-
-<div align="center">
-
-<img src="./assets/TrainingProgression.png" width="750" />
-
-</div>
-
-
-
 
 ---
 
@@ -63,6 +52,7 @@ The plot below shows the training progression over the generations with error ba
 - Late move pruning
 - Late move reductions
 - Internal iterative reduction
+- Mate distance pruning
 
 #### Extensions
 - Singular extensions
@@ -78,10 +68,13 @@ The plot below shows the training progression over the generations with error ba
 - Improving heuristic
 - Quiescence search with SEE
 - Time management based on move and eval stability
+- WDL normalization
+- SIMD code for faster evaluation
 
 ### Evaluation
 - NNUE with architecture `(768 → 1536) × 2 → 1 × 8` trained with the excellent [Bullet] crate
 - SPSA trainer *(work in progress)*
+- correction histories
 
 
 ### UCI Support
@@ -121,7 +114,7 @@ Below is a table of Elo estimates from having the engine play against other engi
 | v7.0 (Net 1) | 2850              | 2392                                                                    | 2739                                                                    | 2858                                                                         | /                                                            | /                                                        |
 | v8.0 (Net 0) | 2993              | 2507                                                                    | 2869                                                                    | 2996                                                                         | /                                                            | /                                                        |
 | v9.0 (Net 0) | 3193              | 2691                                                                    | 3027                                                                    | 3062                                                                         | 3264                                                         | 3223                                                     |
-| v9.1 (Net 0) | /                 | /                                                                       | /                                                                       | /                                                                            | /                                                            | /                                                        |
+| v9.1 (Net 0) | 3388              | /                                                                       | /                                                                       | /                                                                            | /                                                            | /                                                        |
 ---
 
 
@@ -220,10 +213,10 @@ This project is licensed under the [GNU General Public License v3.0][license-lin
 [release-badge]: https://img.shields.io/github/v/release/WGCodings/Pea?style=for-the-badge&color=violet
 [release-link]: https://github.com/WGCodings/Pea/releases/latest
 
-[lichess-badge0]: https://img.shields.io/badge/Play-Net_0_Gen_9-green?logo=lichess&style=for-the-badge
+[lichess-badge0]: https://img.shields.io/badge/Play-Net_0-green?logo=lichess&style=for-the-badge
 [lichess-link0]: https://lichess.org/@/PeaNet0
 
-[lichess-badge1]: https://img.shields.io/badge/Play-Net_1_Gen_9-green?logo=lichess&style=for-the-badge
+[lichess-badge1]: https://img.shields.io/badge/Play-Net_1-green?logo=lichess&style=for-the-badge
 [lichess-link1]: https://lichess.org/@/PeaNet1
 
 <!-- Links -->
