@@ -8,7 +8,7 @@ use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::search::search::SearchStats;
 use crate::engine::tt::TranspositionTable;
-use crate::nnue::network::{accumulators_from_position, calculate_index, role_index, Accumulator, Network};
+use crate::nnue::network::{accumulators_from_position, calculate_index, role_index, Accumulator, BucketInfo, Network};
 
 // Keep track of move, eval and nr of double ext per ply.
 pub struct Stack {
@@ -151,7 +151,8 @@ pub struct AccumulatorDelta {
     added:   [(usize, usize); 2],
     n_removed: u8,
     n_added: u8,
-    is_clean : bool
+    is_clean : bool,
+    is_refresh : bool,
 }
 
 impl AccumulatorDelta {
@@ -162,6 +163,7 @@ impl AccumulatorDelta {
             n_removed: 0,
             n_added: 0,
             is_clean: false,
+            is_refresh: false,
         }
     }
 }
@@ -173,17 +175,15 @@ impl AccumulatorDelta {
 pub struct NNUEState {
     pub us: Accumulator,
     pub them: Accumulator,
+    pub us_info: BucketInfo,
+    pub them_info:BucketInfo,
     pub stack: Vec<AccumulatorDelta>,
 }
 
 impl NNUEState {
     pub fn new<P: Position>(pos: &P, net: &Network) -> Self {
-        let (us, them) = accumulators_from_position(pos, net);
-        Self {
-            us,
-            them,
-            stack: Vec::with_capacity(64),
-        }
+        let (us, them, us_info, them_info) = accumulators_from_position(pos, net);
+        Self { us, them, us_info, them_info, stack: Vec::with_capacity(64) }
     }
 }
 
@@ -192,12 +192,23 @@ impl NNUEState {
 // =====================================================================================================================//
 
 #[inline(always)]
-pub fn unmake_move_nnue(net: &Network, state: &mut NNUEState) {
+pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUEState) {
     let delta = state.stack.pop().unwrap();
+
+    // if move was a refresh (new king bucket or mirror) refresh accumulator from scratch
+    if delta.is_refresh {
+        std::mem::swap(&mut state.us, &mut state.them);
+        std::mem::swap(&mut state.us_info, &mut state.them_info);
+
+        let (fresh_us, _, fresh_us_info, _) = accumulators_from_position(pos, net);
+        state.us = fresh_us;
+        state.us_info = fresh_us_info;
+    }
 
     // No need to do anything if the accumulator delta is not clean
     if delta.is_clean {
         std::mem::swap(&mut state.us, &mut state.them);
+        std::mem::swap(&mut state.us_info, &mut state.them_info);
 
         let mut us_add = [0usize; 2];
         let mut us_rem = [0usize; 2];
@@ -233,6 +244,7 @@ pub fn unmake_null_move_nnue(state: &mut NNUEState) {
 
     if delta.is_clean {
         std::mem::swap(&mut state.us, &mut state.them);
+        std::mem::swap(&mut state.us_info, &mut state.them_info);
     }
 
 }
@@ -254,6 +266,12 @@ pub fn clean_accumulator(
 
         let delta = state.stack[i];
 
+        if delta.is_refresh {
+            std::mem::swap(&mut state.us, &mut state.them);
+            std::mem::swap(&mut state.us_info, &mut state.them_info);
+            continue;
+        }
+
         let mut us_add = [0usize; 2];
         let mut us_rem = [0usize; 2];
         let mut them_add = [0usize; 2];
@@ -273,20 +291,53 @@ pub fn clean_accumulator(
 
         // if applied, it is clean
         state.stack[i].is_clean = true;
+
         std::mem::swap(&mut state.us, &mut state.them);
+        std::mem::swap(&mut state.us_info, &mut state.them_info);
         }
     }
 
-
+/// Check if a move is a king move
+/// TODO Later add only check if it is moving to new bucket
+#[inline(always)]
+fn is_king_move<P: Position>(mv: &Move) -> bool {
+    match *mv {
+        Move::Normal { role, .. } => role == Role::King,
+        Move::Castle { .. } => true,
+        _ => false,
+    }
+}
 
 
 
 #[inline(always)]
 pub fn make_move_nnue<P: Position>(
     pos: &P,
+    child_pos: &P,
     mv: &Move,
+    net: &Network,
     state: &mut NNUEState,
 ) {
+
+    // accumulator refresh logic
+    if is_king_move::<P>(mv) {
+        let mut delta = AccumulatorDelta::default();
+        delta.is_refresh = true;
+        delta.is_clean = true;
+
+        println!("is_king_move {:?}", mv);
+
+        let (fresh_us, _, fresh_us_info, _) = accumulators_from_position(child_pos, net);
+        state.us = fresh_us;
+        state.us_info = fresh_us_info;
+
+        state.stack.push(delta);
+        std::mem::swap(&mut state.us, &mut state.them);
+        std::mem::swap(&mut state.us_info, &mut state.them_info);
+        return;
+    }
+
+
     let mut delta = AccumulatorDelta::default();
 
     // record all changes to accumulator inside these lists to apply them fused later
@@ -297,6 +348,8 @@ pub fn make_move_nnue<P: Position>(
 
     let perspective = pos.turn();
     let board = pos.board();
+    let us_info = state.us_info;
+    let them_info = state.them_info;
 
     match *mv {
 
@@ -310,19 +363,19 @@ pub fn make_move_nnue<P: Position>(
             let to_sq = to.to_usize();
             let piece_type = role_index(piece.role);
 
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective);
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective, us_info, them_info);
 
             if let Some(captured) = board.piece_at(to) {
                 let cap_side = if captured.color == Color::White { 0 } else { 1 };
                 let cap_type = role_index(captured.role);
 
-                remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, to_sq, cap_type, perspective);
+                remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, to_sq, cap_type, perspective, us_info, them_info);
             }
 
             let final_role = promotion.unwrap_or(piece.role);
             let final_type = role_index(final_role);
 
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, final_type, perspective);
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, final_type, perspective, us_info, them_info);
         }
 
         // ============================================================
@@ -336,15 +389,15 @@ pub fn make_move_nnue<P: Position>(
             let to_sq = to.to_usize();
             let piece_type = role_index(Role::Pawn);
 
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective);
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective, us_info, them_info);
 
             let captured_sq = Square::from_coords(to.file(), from.rank());
             let cap_sq = captured_sq.to_usize();
             let cap_side = 1 - side;
 
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, cap_sq, piece_type, perspective);
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, cap_sq, piece_type, perspective, us_info, them_info);
 
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, piece_type, perspective);
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, piece_type, perspective, us_info, them_info);
         }
 
         // ============================================================
@@ -364,10 +417,10 @@ pub fn make_move_nnue<P: Position>(
             let king_type = role_index(Role::King);
             let rook_type = role_index(Role::Rook);
 
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, king_from, king_type, perspective);
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, rook_from, rook_type, perspective);
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, king_to, king_type, perspective);
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, rook_to, rook_type, perspective);
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, king_from, king_type, perspective, us_info, them_info);
+            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, rook_from, rook_type, perspective, us_info, them_info);
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, king_to, king_type, perspective, us_info, them_info);
+            add_feature(&mut delta, &mut us_add, &mut them_add, side, rook_to, rook_type, perspective, us_info, them_info);
         }
         _ => {}
     }
@@ -394,9 +447,11 @@ fn remove_feature(
     sq: usize,
     piece_type: usize,
     perspective: Color,
+    us_info: BucketInfo,
+    them_info: BucketInfo,
 ) {
-    let us_idx = calculate_index(side, sq, piece_type, perspective);
-    let them_idx = calculate_index(side, sq, piece_type, !perspective);
+    let us_idx = calculate_index(side, sq, piece_type, perspective, us_info);
+    let them_idx = calculate_index(side, sq, piece_type, !perspective, them_info);
 
     let n = delta.n_removed as usize;
     us_rem[n] = us_idx;
@@ -413,9 +468,11 @@ fn add_feature(
     sq: usize,
     piece_type: usize,
     perspective: Color,
+    us_info: BucketInfo,
+    them_info: BucketInfo,
 ) {
-    let us_idx = calculate_index(side, sq, piece_type, perspective);
-    let them_idx = calculate_index(side, sq, piece_type, !perspective);
+    let us_idx = calculate_index(side, sq, piece_type, perspective, us_info);
+    let them_idx = calculate_index(side, sq, piece_type, !perspective, them_info);
 
     let n = delta.n_added as usize;
     us_add[n] = us_idx;

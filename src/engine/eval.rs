@@ -11,6 +11,17 @@ pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
 
     clean_accumulator(net, state);
 
+    let (fresh_us, fresh_them, fresh_us_info, fresh_them_info) = accumulators_from_position(pos, net);
+    if state.us.vals != fresh_us.vals
+        || state.them.vals != fresh_them.vals
+        || state.us_info.mirror != fresh_us_info.mirror
+        || state.us_info.bucket != fresh_us_info.bucket
+        || state.them_info.mirror != fresh_them_info.mirror
+        || state.them_info.bucket != fresh_them_info.bucket
+    {
+        panic!("NNUE desync! pos: {}", pos.board());
+    }
+
     let nnue_score= net.evaluate(&state.us, &state.them, pos);
     
 

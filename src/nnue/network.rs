@@ -5,58 +5,87 @@ const QB: i16 = 64;
 
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
+const KING_BUCKET_LAYOUT: [usize; 32] = [
+    0, 1, 2, 3,
+    4, 4, 5, 5,
+    6, 6, 6, 6,
+    7, 7, 7, 7,
+    8, 8, 8, 8,
+    8, 8, 8, 8,
+    9, 9, 9, 9,
+    9, 9, 9, 9,
+];
+const NUM_INPUT_BUCKETS: usize = 10;
+
 use std::arch::x86_64::*;
 
-use shakmaty::{Chess, Color, Position, Role};
+use shakmaty::{Board, Chess, Color, Position, Role};
 
-static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/quantised.bin")) };
+static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/kb/quantised.bin")) };
 
 // =====================================================================================================================//
 // NNUE NETWORK IS TRAINED BY THE BULLET CRATE AND CODE HAS BEEN REUSED FROM ONE OF THE EXAMPLES TO DO THE INFERENCE
 // =====================================================================================================================//
+///Contains info about the state of the accumulator.
+/// It says if the accumulator is mirrored and what king bucket is currently being used.
+#[derive(Clone, Copy)]
+pub struct BucketInfo {
+    pub mirror: bool,
+    pub bucket: usize,
+}
+
+/// Returns the bucketinfo for a given color/perspective and the current board.
+fn get_bucket(board: &Board, perspective: Color) -> BucketInfo {
+    let king_sq = board.king_of(perspective).unwrap();
+    let mut sq_idx = king_sq.to_usize();
+    if perspective == Color::Black {
+        sq_idx ^= 0b111000;
+    }
+    let file = sq_idx & 0b111;
+    let rank = sq_idx >> 3;
+    let mirror = file >= 4;
+    let bucket_file = if mirror { 7 - file } else { file };
+    let bucket = KING_BUCKET_LAYOUT[rank * 4 + bucket_file];
+    println!("bucket {}", bucket);
+    BucketInfo { mirror, bucket }
+}
 
 #[inline(always)]
-pub fn accumulators_from_position<P: Position>(
-    pos: &P,
-    net: &Network,
-) -> (Accumulator, Accumulator) {
+pub fn accumulators_from_position<P: Position>(pos: &P, net: &Network) -> (Accumulator, Accumulator, BucketInfo, BucketInfo) {
     let mut us = Accumulator::new(net);
     let mut them = Accumulator::new(net);
 
-    let perspective = pos.turn();
+    let stm = pos.turn();
+    let board = pos.board();
+    let us_info = get_bucket(board, stm);
+    let them_info =get_bucket(board, !stm);
 
     for square in shakmaty::Square::ALL {
-
-        if let Some(piece) = pos.board().piece_at(square) {
-
+        if let Some(piece) = board.piece_at(square) {
             let sq_idx = shakmaty::Square::to_usize(square);
+            let piece_type = role_index(piece.role);
+            let side = if piece.color == Color::White { 0 } else { 1 };
 
-            let piece_type : usize = role_index(piece.role); // 0 for pawn, 1 for knight etc
-
-            let side : usize = if piece.color == Color::White {0} else {1};
-
-            let feature_index_stm = calculate_index(side,sq_idx,piece_type,perspective);
-            let feature_index_nstm = calculate_index(side,sq_idx,piece_type,!perspective);
-
-
-            us.add_feature(feature_index_stm, net);
-
-            them.add_feature(feature_index_nstm, net);
-
+            us.add_feature(calculate_index(side, sq_idx, piece_type, stm, us_info), net);
+            them.add_feature(calculate_index(side, sq_idx, piece_type, !stm, them_info), net);
         }
     }
-
-    (us, them)
+    (us, them, us_info, them_info)
 }
+
 #[inline(always)]
-pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type : usize, perspective : Color) -> usize{
+pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, info: BucketInfo) -> usize {
     if perspective == Color::Black {
-        side = 1-side;
+        side = 1 - side;
         sq_idx ^= 0b111000;
     }
-    (side*6 + piece_type)*64 + sq_idx
-
+    if info.mirror {
+        sq_idx ^= 0b000111;
+    }
+    info.bucket * 768 + (side * 6 + piece_type) * 64 + sq_idx
 }
+
+
 #[inline(always)]
 pub fn role_index(role: Role) -> usize {
     match role {
@@ -83,7 +112,7 @@ pub fn screlu(x: i16) -> i32 {
 pub struct Network {
     /// Column-Major `HIDDEN_SIZE x 768` matrix.
     /// Values have quantization of QA.
-    feature_weights: [Accumulator; 768],
+    feature_weights: [Accumulator; 768 * NUM_INPUT_BUCKETS],
     /// Vector with dimension `HIDDEN_SIZE`.
     /// Values have quantization of QA.
     feature_bias: Accumulator,

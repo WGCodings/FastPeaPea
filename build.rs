@@ -1,6 +1,6 @@
 use std::env;
 
-const DEFAULT_PATH: &str = "nnue/files/quantised.bin";
+const DEFAULT_PATH: &str = "nnue/files/kb/quantised.bin";
 fn main() {
     println!("cargo:rerun-if-env-changed=EVALFILE");
     println!("cargo:rerun-if-changed={}", DEFAULT_PATH);
