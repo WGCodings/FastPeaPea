@@ -16,9 +16,7 @@ pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
         Color::Black => (&state.black_acc, &state.white_acc),
     };
 
-    
     let nnue_score= net.evaluate(us,them,pos);
-    
 
     let mopup_score = mopup_evaluation(pos,nnue_score);
 
