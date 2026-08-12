@@ -16,7 +16,18 @@ pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
         Color::Black => (&state.black_acc, &state.white_acc),
     };
 
+    let (fresh_white, fresh_white_info) = accumulator_for_perspective(pos, net, Color::White);
+    let (fresh_black, fresh_black_info) = accumulator_for_perspective(pos, net, Color::Black);
+    if state.white_acc.vals != fresh_white.vals || state.black_acc.vals != fresh_black.vals
+        || state.white_info.mirror != fresh_white_info.mirror || state.white_info.bucket != fresh_white_info.bucket
+        || state.black_info.mirror != fresh_black_info.mirror || state.black_info.bucket != fresh_black_info.bucket
+    {
+        panic!("NNUE desync! pos: {}", pos.board());
+    }
+
+
     let nnue_score= net.evaluate(us,them,pos);
+
 
     let mopup_score = mopup_evaluation(pos,nnue_score);
 

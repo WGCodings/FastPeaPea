@@ -5,8 +5,17 @@ const QB: i16 = 64;
 
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
-const KING_BUCKET_LAYOUT: [usize; 32] = [0; 32];
-const NUM_INPUT_BUCKETS: usize = 1;
+const KING_BUCKET_LAYOUT: [usize; 32] = [
+    0, 0, 1, 1,
+    2, 2, 4, 4,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+    3, 3, 3, 3,
+];
+const NUM_INPUT_BUCKETS: usize = 5;
 
 use std::arch::x86_64::*;
 
@@ -37,10 +46,21 @@ fn get_bucket(board: &Board, perspective: Color) -> BucketInfo {
     let mirror = file >= 4;
     let bucket_file = if mirror { 7 - file } else { file };
     let bucket = KING_BUCKET_LAYOUT[rank * 4 + bucket_file];
-
+    
     BucketInfo { mirror, bucket }
 }
 
+#[inline(always)]
+pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, info: BucketInfo) -> usize {
+    if perspective == Color::Black {
+        side = 1 - side;
+        sq_idx ^= 0b111000;
+    }
+    if info.mirror {
+        sq_idx ^= 0b000111;
+    }
+    info.bucket * 768 + (side * 6 + piece_type) * 64 + sq_idx
+}
 
 #[inline(always)]
 pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspective: Color) -> (Accumulator, BucketInfo) {
@@ -58,19 +78,6 @@ pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspect
     }
     (acc, info)
 }
-
-#[inline(always)]
-pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, info: BucketInfo) -> usize {
-    if perspective == Color::Black {
-        side = 1 - side;
-        sq_idx ^= 0b111000;
-    }
-    if info.mirror {
-        sq_idx ^= 0b000111;
-    }
-    info.bucket * 768 + (side * 6 + piece_type) * 64 + sq_idx
-}
-
 
 #[inline(always)]
 pub fn role_index(role: Role) -> usize {
