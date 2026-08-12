@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use shakmaty::{Bitboard, Chess, EnPassantMode, Move, Position};
 use shakmaty::zobrist::{Zobrist64};
 use crate::engine::eval::evaluate;
-use crate::engine::search::context::{make_move_nnue, make_null_move_nnue, unmake_move_nnue, unmake_null_move_nnue, SearchContext};
+use crate::engine::search::context::{make_move_nnue, unmake_move_nnue, SearchContext};
 use crate::engine::search::pv::PvTable;
 use crate::engine::search::see::see;
 use crate::engine::time_manager::TimeManager;
@@ -256,8 +256,6 @@ pub fn negamax(
 
         reduction = reduction.clamp(1,depth);
 
-        make_null_move_nnue(&mut ctx.nnue);
-
         let child_pos = pos.clone().swap_turn().unwrap();
 
         let hash_child = child_pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
@@ -266,8 +264,6 @@ pub fn negamax(
         let score = -negamax(&child_pos, ctx, depth - reduction, ply + 1, -beta, -beta + 1, false, false, &mut PvTable::new());
 
         //TODO add verification
-
-        unmake_null_move_nnue(&mut ctx.nnue);
 
         ctx.decrease_history();
 

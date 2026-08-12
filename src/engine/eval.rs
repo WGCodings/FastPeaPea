@@ -2,7 +2,7 @@ use std::cmp::max;
 use shakmaty::{Bitboard, Chess, Color, Position, Role, Square};
 use crate::engine::search::context::{clean_accumulator, NNUEState};
 use crate::engine::types::{KBN_TABLE_DARK, KBN_TABLE_LIGHT, MATE_SCORE};
-use crate::nnue::network::{accumulators_from_position, Network};
+use crate::nnue::network::{accumulator_for_perspective, Network};
 
 // =====================================================================================================================//
 // EVALUATE NNUE + MOPUP                                                                                                //
@@ -11,18 +11,13 @@ pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
 
     clean_accumulator(net, state);
 
-    let (fresh_us, fresh_them, fresh_us_info, fresh_them_info) = accumulators_from_position(pos, net);
-    if state.us.vals != fresh_us.vals
-        || state.them.vals != fresh_them.vals
-        || state.us_info.mirror != fresh_us_info.mirror
-        || state.us_info.bucket != fresh_us_info.bucket
-        || state.them_info.mirror != fresh_them_info.mirror
-        || state.them_info.bucket != fresh_them_info.bucket
-    {
-        panic!("NNUE desync! pos: {}", pos.board());
-    }
+    let (us, them) = match pos.turn() {
+        Color::White => (&state.white_acc, &state.black_acc),
+        Color::Black => (&state.black_acc, &state.white_acc),
+    };
 
-    let nnue_score= net.evaluate(&state.us, &state.them, pos);
+    
+    let nnue_score= net.evaluate(us,them,pos);
     
 
     let mopup_score = mopup_evaluation(pos,nnue_score);

@@ -46,31 +46,26 @@ fn get_bucket(board: &Board, perspective: Color) -> BucketInfo {
     let mirror = file >= 4;
     let bucket_file = if mirror { 7 - file } else { file };
     let bucket = KING_BUCKET_LAYOUT[rank * 4 + bucket_file];
-    println!("bucket {}", bucket);
+
     BucketInfo { mirror, bucket }
 }
 
-#[inline(always)]
-pub fn accumulators_from_position<P: Position>(pos: &P, net: &Network) -> (Accumulator, Accumulator, BucketInfo, BucketInfo) {
-    let mut us = Accumulator::new(net);
-    let mut them = Accumulator::new(net);
 
-    let stm = pos.turn();
+#[inline(always)]
+pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspective: Color) -> (Accumulator, BucketInfo) {
+    let mut acc = Accumulator::new(net);
     let board = pos.board();
-    let us_info = get_bucket(board, stm);
-    let them_info =get_bucket(board, !stm);
+    let info = get_bucket(board, perspective);
 
     for square in shakmaty::Square::ALL {
         if let Some(piece) = board.piece_at(square) {
             let sq_idx = shakmaty::Square::to_usize(square);
             let piece_type = role_index(piece.role);
             let side = if piece.color == Color::White { 0 } else { 1 };
-
-            us.add_feature(calculate_index(side, sq_idx, piece_type, stm, us_info), net);
-            them.add_feature(calculate_index(side, sq_idx, piece_type, !stm, them_info), net);
+            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, info), net);
         }
     }
-    (us, them, us_info, them_info)
+    (acc, info)
 }
 
 #[inline(always)]
