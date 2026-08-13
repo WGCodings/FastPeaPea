@@ -1,4 +1,4 @@
-const HIDDEN_SIZE: usize = 256;
+const HIDDEN_SIZE: usize = 1536;
 const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
@@ -9,7 +9,7 @@ use std::arch::x86_64::*;
 
 use shakmaty::{Chess, Color, Position, Role};
 
-static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/256hl/quantised.bin")) };
+static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/lc0/quantised.bin")) };
 
 // =====================================================================================================================//
 // NNUE NETWORK IS TRAINED BY THE BULLET CRATE AND CODE HAS BEEN REUSED FROM ONE OF THE EXAMPLES TO DO THE INFERENCE
@@ -31,7 +31,7 @@ pub fn accumulators_from_position<P: Position>(
 
             let sq_idx = shakmaty::Square::to_usize(square);
 
-            let piece_type : usize = role_index(piece.role); // 0 for pawn, 1 for knight etc
+            let piece_type : usize = role_index(piece.role);
 
             let side : usize = if piece.color == Color::White {0} else {1};
 
