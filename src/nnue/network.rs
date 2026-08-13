@@ -20,7 +20,7 @@ static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/
 
 
 /// Returns the bucketinfo for a given color/perspective and the current board.
-fn get_bucket(board: &Board, perspective: Color) -> usize {
+pub fn get_bucket(board: &Board, perspective: Color) -> usize {
     let king_sq = board.king_of(perspective).unwrap();
     let mut sq_idx = king_sq.to_usize();
     if perspective == Color::Black {

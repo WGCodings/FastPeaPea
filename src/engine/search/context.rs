@@ -8,7 +8,7 @@ use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::search::search::SearchStats;
 use crate::engine::tt::TranspositionTable;
-use crate::nnue::network::{accumulator_for_perspective, calculate_index, role_index, Accumulator, Network};
+use crate::nnue::network::{accumulator_for_perspective, calculate_index, get_bucket, role_index, Accumulator, Network};
 
 // Keep track of move, eval and nr of double ext per ply.
 pub struct Stack {
@@ -285,6 +285,15 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
 
     if is_king_move::<P>(mv) {
         let stm = pos.turn();
+
+        let new_bucket = get_bucket(child_pos.board(), stm);
+        let old_bucket = match stm { Color::White => white_bucket, Color::Black => black_bucket};
+
+        // If bucket doesnt change, we dont need refresh ofc
+        if new_bucket == old_bucket {
+            state.stack.push(delta);
+            return;
+        }
 
         clean_accumulator(net, state);
 
