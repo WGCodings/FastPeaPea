@@ -1,4 +1,4 @@
-const HIDDEN_SIZE: usize = 512;
+const HIDDEN_SIZE: usize = 256;
 const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
@@ -9,7 +9,7 @@ use std::arch::x86_64::*;
 
 use shakmaty::{Chess, Color, Position, Role};
 
-static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/512hl/quantised.bin")) };
+static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/256hl/quantised.bin")) };
 
 // =====================================================================================================================//
 // NNUE NETWORK IS TRAINED BY THE BULLET CRATE AND CODE HAS BEEN REUSED FROM ONE OF THE EXAMPLES TO DO THE INFERENCE
