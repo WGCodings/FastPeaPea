@@ -203,25 +203,56 @@ impl NNUEState {
 // MAKE AND UNMAKE NNUE ACCUMULATOR                                                                                     //
 // =====================================================================================================================//
 
-#[inline(always)]
 /// Loop over the accumulator delta stack until you find a clean one. Then do incremental updates from that point back to the current accumulator.
-pub fn clean_accumulator(
-    net: &Network,
-    state: &mut NNUEState){
+#[inline(always)]
+pub fn clean_accumulator<P: Position>(pos: &P, net: &Network, state: &mut NNUEState) {
 
     if state.applied == state.stack.len() {
         return;
     }
+
+    // flags used to avoid cleaning the accumulator when we are using finny tables later to do the updates anyways.
+    let mut do_white_finny_refresh = false;
+    let mut do_black_finny_refresh = false;
+
     for i in state.applied..state.stack.len() {
         let delta = state.stack[i];
 
-        if delta.is_refresh { continue; }
+        if delta.is_refresh {
+            match delta.refresh_color {
+                Color::White => {
+                    do_white_finny_refresh = true;
+                    if !do_black_finny_refresh {
+                        state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net);
+                    }
+                }
+                Color::Black => {
+                    do_black_finny_refresh = true;
+                    if !do_white_finny_refresh {
+                        state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net);
+                    }
+                }
+            }
+            continue;
+        }
 
-        state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net);
-        state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net);
+        if !do_white_finny_refresh {
+            state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net);
+        }
+        if !do_black_finny_refresh {
+            state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net);
+        }
     }
+
+    if do_white_finny_refresh {
+        state.white_acc = finny_refresh(pos, net, Color::White, state.white_bucket, &mut state.ft);
+    }
+    if do_black_finny_refresh {
+        state.black_acc = finny_refresh(pos, net, Color::Black, state.black_bucket, &mut state.ft);
+    }
+
     state.applied = state.stack.len();
-    }
+}
 
 fn finny_refresh<P: Position>(pos: &P, net: &Network, perspective: Color, bucket: usize, ft: &mut FinnyTable) -> Accumulator {
     let board = pos.board();
@@ -269,7 +300,7 @@ fn is_king_move<P: Position>(mv: &Move) -> bool {
 }
 
 #[inline(always)]
-pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Network, state: &mut NNUEState) {
+pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, state: &mut NNUEState) {
     let mut delta = AccumulatorDelta::default();
     let board = pos.board();
     let white_bucket = state.white_bucket;
@@ -328,40 +359,16 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
         let stm = pos.turn();
 
         let new_bucket = get_bucket(child_pos.board(), stm);
-        let old_bucket = match stm { Color::White => white_bucket, Color::Black => black_bucket};
+        let old_bucket = match stm { Color::White => white_bucket, Color::Black => black_bucket };
 
-        // If bucket doesnt change, we dont need refresh ofc
-        if new_bucket == old_bucket {
-            state.stack.push(delta);
-            return;
-        }
-
-        clean_accumulator(net, state);
-
-        match stm {
-            Color::White => state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net),
-            Color::Black => state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net)
-        }
-
-
-        match stm {
-            Color::White => {
-                let fresh_acc = finny_refresh(child_pos, net, Color::White, new_bucket, &mut state.ft);
-                state.white_acc = fresh_acc;
-                state.white_bucket = new_bucket;
+        if new_bucket != old_bucket {
+            match stm {
+                Color::White => state.white_bucket = new_bucket,
+                Color::Black => state.black_bucket = new_bucket,
             }
-            Color::Black => {
-                let fresh_acc = finny_refresh(child_pos, net, Color::Black, new_bucket, &mut state.ft);
-                state.black_acc = fresh_acc;
-                state.black_bucket = new_bucket;
-            }
+            delta.is_refresh = true;
+            delta.refresh_color = stm;
         }
-
-        delta.is_refresh = true;
-        delta.refresh_color = stm;
-        state.stack.push(delta);
-        state.applied += 1;
-        return;
     }
 
     state.stack.push(delta);
@@ -371,6 +378,14 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
 pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUEState) {
     let is_clean = state.applied == state.stack.len();
     let delta = state.stack.pop().unwrap();
+
+    if delta.is_refresh {
+        let old_bucket = get_bucket(pos.board(), delta.refresh_color);
+        match delta.refresh_color {
+            Color::White => state.white_bucket = old_bucket,
+            Color::Black => state.black_bucket = old_bucket,
+        }
+    }
 
     if !is_clean {
         return;
@@ -385,19 +400,11 @@ pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUESta
             Color::Black => state.white_acc.apply_feature_updates(&delta.white_removed[..delta.n_removed as usize], &delta.white_added[..delta.n_added as usize], net)
         }
 
-        let old_bucket = get_bucket(pos.board(), stm);
+        let bucket = match stm { Color::White => state.white_bucket, Color::Black => state.black_bucket };
 
         match stm {
-            Color::White => {
-                let fresh_acc = finny_refresh(pos, net, Color::White, old_bucket, &mut state.ft);
-                state.white_acc = fresh_acc;
-                state.white_bucket = old_bucket;
-            }
-            Color::Black => {
-                let fresh_acc = finny_refresh(pos, net, Color::Black, old_bucket, &mut state.ft);
-                state.black_acc = fresh_acc;
-                state.black_bucket = old_bucket;
-            }
+            Color::White => state.white_acc = finny_refresh(pos, net, Color::White, bucket, &mut state.ft),
+            Color::Black => state.black_acc = finny_refresh(pos, net, Color::Black, bucket, &mut state.ft),
         }
         return;
     }
