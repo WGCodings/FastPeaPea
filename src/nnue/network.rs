@@ -5,17 +5,17 @@ const QB: i16 = 64;
 
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
-const KING_BUCKET_LAYOUT: [usize; 32] = [
-    1, 1, 1, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0 ,0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
+const KING_BUCKET_LAYOUT: [usize; 64] =  [
+    0, 0, 1, 1, 5, 5, 4, 4,
+    2, 2, 2, 2, 6, 6, 6, 6,
+    3, 3, 3, 3, 7, 7, 7, 7,
+    3, 3, 3, 3, 7, 7, 7, 7,
+    3, 3, 3, 3, 7, 7, 7, 7,
+    3, 3, 3, 3, 7, 7, 7, 7,
+    3, 3, 3, 3, 7, 7, 7, 7,
+    3, 3, 3, 3, 7, 7, 7, 7,
 ];
-const NUM_INPUT_BUCKETS: usize = 2;
+const NUM_INPUT_BUCKETS: usize = 8;
 
 use std::arch::x86_64::*;
 
@@ -26,57 +26,42 @@ static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/
 // =====================================================================================================================//
 // NNUE NETWORK IS TRAINED BY THE BULLET CRATE AND CODE HAS BEEN REUSED FROM ONE OF THE EXAMPLES TO DO THE INFERENCE
 // =====================================================================================================================//
-///Contains info about the state of the accumulator.
-/// It says if the accumulator is mirrored and what king bucket is currently being used.
-#[derive(Clone, Copy)]
-pub struct BucketInfo {
-    pub mirror: bool,
-    pub bucket: usize,
-}
+
 
 /// Returns the bucketinfo for a given color/perspective and the current board.
-fn get_bucket(board: &Board, perspective: Color) -> BucketInfo {
+fn get_bucket(board: &Board, perspective: Color) -> usize {
     let king_sq = board.king_of(perspective).unwrap();
     let mut sq_idx = king_sq.to_usize();
     if perspective == Color::Black {
         sq_idx ^= 0b111000;
     }
-    let file = sq_idx & 0b111;
-    let rank = sq_idx >> 3;
-    let mirror = file >= 4;
-    let bucket_file = if mirror { 7 - file } else { file };
-    let bucket = KING_BUCKET_LAYOUT[rank * 4 + bucket_file];
-
-    BucketInfo { mirror, bucket }
+    KING_BUCKET_LAYOUT[sq_idx]
 }
 
 #[inline(always)]
-pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, info: BucketInfo) -> usize {
+pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize) -> usize {
     if perspective == Color::Black {
         side = 1 - side;
         sq_idx ^= 0b111000;
     }
-    if info.mirror {
-        sq_idx ^= 0b000111;
-    }
-    info.bucket * 768 + (side * 6 + piece_type) * 64 + sq_idx
+    bucket * 768 + (side * 6 + piece_type) * 64 + sq_idx
 }
 
 #[inline(always)]
-pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspective: Color) -> (Accumulator, BucketInfo) {
+pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspective: Color) -> (Accumulator, usize) {
     let mut acc = Accumulator::new(net);
     let board = pos.board();
-    let info = get_bucket(board, perspective);
+    let bucket = get_bucket(board, perspective);
 
     for square in shakmaty::Square::ALL {
         if let Some(piece) = board.piece_at(square) {
             let sq_idx = shakmaty::Square::to_usize(square);
             let piece_type = role_index(piece.role);
             let side = if piece.color == Color::White { 0 } else { 1 };
-            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, info), net);
+            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, bucket), net);
         }
     }
-    (acc, info)
+    (acc, bucket)
 }
 
 #[inline(always)]

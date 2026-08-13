@@ -8,7 +8,7 @@ use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::search::search::SearchStats;
 use crate::engine::tt::TranspositionTable;
-use crate::nnue::network::{accumulator_for_perspective, calculate_index, role_index, Accumulator, BucketInfo, Network};
+use crate::nnue::network::{accumulator_for_perspective, calculate_index, role_index, Accumulator, Network};
 
 // Keep track of move, eval and nr of double ext per ply.
 pub struct Stack {
@@ -176,17 +176,17 @@ impl AccumulatorDelta {
 pub struct NNUEState {
     pub white_acc: Accumulator,
     pub black_acc: Accumulator,
-    pub white_info: BucketInfo,
-    pub black_info: BucketInfo,
+    pub white_bucket: usize,
+    pub black_bucket: usize,
     pub stack: Vec<AccumulatorDelta>,
-    pub applied: usize
+    pub applied: usize,
 }
 
 impl NNUEState {
     pub fn new<P: Position>(pos: &P, net: &Network) -> Self {
-        let (white_acc, white_info) = accumulator_for_perspective(pos, net, Color::White);
-        let (black_acc, black_info) = accumulator_for_perspective(pos, net, Color::Black);
-        Self { white_acc, black_acc, white_info, black_info, stack: Vec::with_capacity(64), applied: 0 }
+        let (white_acc, white_bucket) = accumulator_for_perspective(pos, net, Color::White);
+        let (black_acc, black_bucket) = accumulator_for_perspective(pos, net, Color::Black);
+        Self { white_acc, black_acc, white_bucket, black_bucket, stack: Vec::with_capacity(64), applied: 0 }
     }
 }
 
@@ -231,8 +231,8 @@ fn is_king_move<P: Position>(mv: &Move) -> bool {
 pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Network, state: &mut NNUEState) {
     let mut delta = AccumulatorDelta::default();
     let board = pos.board();
-    let white_info = state.white_info;
-    let black_info = state.black_info;
+    let white_bucket = state.white_bucket;
+    let black_bucket = state.black_bucket;
 
     match *mv {
         Move::Normal { from, to, promotion, .. } => {
@@ -240,16 +240,16 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
             let side = if piece.color == Color::White { 0 } else { 1 };
             let piece_type = role_index(piece.role);
 
-            remove_feature(&mut delta, side, from.to_usize(), piece_type, white_info, black_info);
+            remove_feature(&mut delta, side, from.to_usize(), piece_type, white_bucket, black_bucket);
 
             if let Some(captured) = board.piece_at(to) {
                 let cap_side = if captured.color == Color::White { 0 } else { 1 };
                 let cap_type = role_index(captured.role);
-                remove_feature(&mut delta, cap_side, to.to_usize(), cap_type, white_info, black_info);
+                remove_feature(&mut delta, cap_side, to.to_usize(), cap_type, white_bucket, black_bucket);
             }
 
             let final_type = role_index(promotion.unwrap_or(piece.role));
-            add_feature(&mut delta, side, to.to_usize(), final_type, white_info, black_info);
+            add_feature(&mut delta, side, to.to_usize(), final_type, white_bucket, black_bucket);
         }
 
         Move::EnPassant { from, to } => {
@@ -257,12 +257,12 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
             let side = if piece.color == Color::White { 0 } else { 1 };
             let piece_type = role_index(Role::Pawn);
 
-            remove_feature(&mut delta, side, from.to_usize(), piece_type, white_info, black_info);
+            remove_feature(&mut delta, side, from.to_usize(), piece_type, white_bucket, black_bucket);
 
             let cap_sq = Square::from_coords(to.file(), from.rank()).to_usize();
-            remove_feature(&mut delta, 1 - side, cap_sq, piece_type, white_info, black_info);
+            remove_feature(&mut delta, 1 - side, cap_sq, piece_type, white_bucket, black_bucket);
 
-            add_feature(&mut delta, side, to.to_usize(), piece_type, white_info, black_info);
+            add_feature(&mut delta, side, to.to_usize(), piece_type, white_bucket, black_bucket);
         }
 
         Move::Castle { king, rook } => {
@@ -275,10 +275,10 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
             let king_to = if kingside { king_from + 2 } else { king_from - 2 };
             let rook_to = if kingside { king_from + 1 } else { king_from - 1 };
 
-            remove_feature(&mut delta, side, king_from, role_index(Role::King), white_info, black_info);
-            remove_feature(&mut delta, side, rook_from, role_index(Role::Rook), white_info, black_info);
-            add_feature(&mut delta, side, king_to, role_index(Role::King), white_info, black_info);
-            add_feature(&mut delta, side, rook_to, role_index(Role::Rook), white_info, black_info);
+            remove_feature(&mut delta, side, king_from, role_index(Role::King), white_bucket, black_bucket);
+            remove_feature(&mut delta, side, rook_from, role_index(Role::Rook), white_bucket, black_bucket);
+            add_feature(&mut delta, side, king_to, role_index(Role::King), white_bucket, black_bucket);
+            add_feature(&mut delta, side, rook_to, role_index(Role::Rook), white_bucket, black_bucket);
         }
         _ => {}
     }
@@ -301,10 +301,10 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
             ),
         }
 
-        let (fresh_acc, fresh_info) = accumulator_for_perspective(child_pos, net, stm);
+        let (fresh_acc, fresh_bucket) = accumulator_for_perspective(child_pos, net, stm);
         match stm {
-            Color::White => { state.white_acc = fresh_acc; state.white_info = fresh_info; }
-            Color::Black => { state.black_acc = fresh_acc; state.black_info = fresh_info; }
+            Color::White => { state.white_acc = fresh_acc; state.white_bucket = fresh_bucket; }
+            Color::Black => { state.black_acc = fresh_acc; state.black_bucket = fresh_bucket; }
         }
 
         delta.is_refresh = true;
@@ -343,24 +343,16 @@ pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUESta
             ),
         }
 
-        let (fresh_acc, fresh_info) = accumulator_for_perspective(pos, net, stm);
+        let (fresh_acc, fresh_bucket) = accumulator_for_perspective(pos, net, stm);
         match stm {
-            Color::White => { state.white_acc = fresh_acc; state.white_info = fresh_info; }
-            Color::Black => { state.black_acc = fresh_acc; state.black_info = fresh_info; }
+            Color::White => { state.white_acc = fresh_acc; state.white_bucket = fresh_bucket; }
+            Color::Black => { state.black_acc = fresh_acc; state.black_bucket = fresh_bucket; }
         }
         return;
     }
 
-    state.white_acc.apply_feature_updates(
-        &delta.white_removed[..delta.n_removed as usize],
-        &delta.white_added[..delta.n_added as usize],
-        net,
-    );
-    state.black_acc.apply_feature_updates(
-        &delta.black_removed[..delta.n_removed as usize],
-        &delta.black_added[..delta.n_added as usize],
-        net,
-    );
+    state.white_acc.apply_feature_updates(&delta.white_removed[..delta.n_removed as usize], &delta.white_added[..delta.n_added as usize], net);
+    state.black_acc.apply_feature_updates(&delta.black_removed[..delta.n_removed as usize], &delta.black_added[..delta.n_added as usize], net);
 }
 
 
@@ -369,18 +361,18 @@ pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUESta
 // HELPER FUNCTION TO ACTIVATE AND DEACTIVATE FEATURES INTO FUSED UPDATES                                               //
 // =====================================================================================================================//
 
-fn remove_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_info: BucketInfo, black_info: BucketInfo) {
-    let white_idx = calculate_index(side, sq, piece_type, Color::White, white_info);
-    let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_info);
+fn remove_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_bucket: usize, black_bucket: usize) {
+    let white_idx = calculate_index(side, sq, piece_type, Color::White, white_bucket);
+    let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_bucket);
     let n = delta.n_removed as usize;
     delta.white_removed[n] = white_idx;
     delta.black_removed[n] = black_idx;
     delta.n_removed += 1;
 }
 
-fn add_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_info: BucketInfo, black_info: BucketInfo) {
-    let white_idx = calculate_index(side, sq, piece_type, Color::White, white_info);
-    let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_info);
+fn add_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_bucket: usize, black_bucket: usize) {
+    let white_idx = calculate_index(side, sq, piece_type, Color::White, white_bucket);
+    let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_bucket);
     let n = delta.n_added as usize;
     delta.white_added[n] = white_idx;
     delta.black_added[n] = black_idx;
