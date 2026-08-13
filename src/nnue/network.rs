@@ -5,17 +5,8 @@ const QB: i16 = 64;
 
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
-const KING_BUCKET_LAYOUT: [usize; 64] =  [
-    0, 0, 1, 1, 5, 5, 4, 4,
-    2, 2, 2, 2, 6, 6, 6, 6,
-    3, 3, 3, 3, 7, 7, 7, 7,
-    3, 3, 3, 3, 7, 7, 7, 7,
-    3, 3, 3, 3, 7, 7, 7, 7,
-    3, 3, 3, 3, 7, 7, 7, 7,
-    3, 3, 3, 3, 7, 7, 7, 7,
-    3, 3, 3, 3, 7, 7, 7, 7,
-];
-const NUM_INPUT_BUCKETS: usize = 8;
+const KING_BUCKET_LAYOUT: [usize; 64] =  [0;64];
+const NUM_INPUT_BUCKETS: usize = 1;
 
 use std::arch::x86_64::*;
 
@@ -42,9 +33,9 @@ fn get_bucket(board: &Board, perspective: Color) -> usize {
 pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize) -> usize {
     if perspective == Color::Black {
         side = 1 - side;
-        sq_idx ^= 0b111000;
+        sq_idx ^= 56;
     }
-    bucket * 768 + (side * 6 + piece_type) * 64 + sq_idx
+    bucket * 768 + side * 384 + piece_type * 64 + sq_idx
 }
 
 #[inline(always)]
