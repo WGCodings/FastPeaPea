@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::{Duration, Instant};
-use shakmaty::{Chess, Color, Move, Position, Role, Square};
+use shakmaty::{Bitboard, Board, Chess, Color, Move, Position, Role, Square};
 use crate::engine::corrhist::{CorrectionHistoryTable, MajorsAndKingsKey, MaterialKey, MinorsAndKingsKey, PawnKey};
+use crate::engine::finny::{FinnyEntry, FinnyTable};
 use crate::engine::history::HistoryTables;
 use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
@@ -180,13 +181,21 @@ pub struct NNUEState {
     pub black_bucket: usize,
     pub stack: Vec<AccumulatorDelta>,
     pub applied: usize,
+    pub ft: FinnyTable
 }
 
 impl NNUEState {
     pub fn new<P: Position>(pos: &P, net: &Network) -> Self {
         let (white_acc, white_bucket) = accumulator_for_perspective(pos, net, Color::White);
         let (black_acc, black_bucket) = accumulator_for_perspective(pos, net, Color::Black);
-        Self { white_acc, black_acc, white_bucket, black_bucket, stack: Vec::with_capacity(64), applied: 0 }
+
+        let mut ft = FinnyTable::default(net);
+        let bb = get_bb(pos.board());
+        *ft.get_entry(Color::White, white_bucket) = FinnyEntry { acc: white_acc, piece_bb: bb };
+        *ft.get_entry(Color::Black, black_bucket) = FinnyEntry { acc: black_acc, piece_bb: bb };
+
+
+        Self { white_acc, black_acc, white_bucket, black_bucket, stack: Vec::with_capacity(64), applied: 0, ft }
     }
 }
 
@@ -214,8 +223,42 @@ pub fn clean_accumulator(
     state.applied = state.stack.len();
     }
 
+fn finny_refresh<P: Position>(pos: &P, net: &Network, perspective: Color, bucket: usize, ft: &mut FinnyTable) -> Accumulator {
+    let board = pos.board();
+    let new_bb = get_bb(board);
+    let entry = ft.get_entry(perspective, bucket);
+
+    let mut acc = entry.acc;
+
+    let mut adds = [0usize; 32];
+    let mut rems = [0usize; 32];
+    let mut n_add = 0;
+    let mut n_rem = 0;
+
+    for side in 0..2 {
+        for role_idx in 0..6 {
+            let old = entry.piece_bb[side][role_idx];
+            let new = new_bb[side][role_idx];
+
+            for sq in old & !new {
+                rems[n_rem] = calculate_index(side, sq.to_usize(), role_idx, perspective, bucket);
+                n_rem += 1;
+            }
+            for sq in new & !old {
+                adds[n_add] = calculate_index(side, sq.to_usize(), role_idx, perspective, bucket);
+                n_add += 1;
+            }
+        }
+    }
+
+    acc.apply_feature_updates(&adds[..n_add], &rems[..n_rem], net);
+
+    entry.acc = acc;
+    entry.piece_bb = new_bb;
+    acc
+}
+
 /// Check if a move is a king move
-/// TODO Later add only check if it is moving to new bucket
 #[inline(always)]
 fn is_king_move<P: Position>(mv: &Move) -> bool {
     match *mv {
@@ -224,8 +267,6 @@ fn is_king_move<P: Position>(mv: &Move) -> bool {
         _ => false,
     }
 }
-
-
 
 #[inline(always)]
 pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Network, state: &mut NNUEState) {
@@ -298,22 +339,22 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Netw
         clean_accumulator(net, state);
 
         match stm {
-            Color::White => state.black_acc.apply_feature_updates(
-                &delta.black_added[..delta.n_added as usize],
-                &delta.black_removed[..delta.n_removed as usize],
-                net,
-            ),
-            Color::Black => state.white_acc.apply_feature_updates(
-                &delta.white_added[..delta.n_added as usize],
-                &delta.white_removed[..delta.n_removed as usize],
-                net,
-            ),
+            Color::White => state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net),
+            Color::Black => state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net)
         }
 
-        let (fresh_acc, fresh_bucket) = accumulator_for_perspective(child_pos, net, stm);
+
         match stm {
-            Color::White => { state.white_acc = fresh_acc; state.white_bucket = fresh_bucket; }
-            Color::Black => { state.black_acc = fresh_acc; state.black_bucket = fresh_bucket; }
+            Color::White => {
+                let fresh_acc = finny_refresh(child_pos, net, Color::White, new_bucket, &mut state.ft);
+                state.white_acc = fresh_acc;
+                state.white_bucket = new_bucket;
+            }
+            Color::Black => {
+                let fresh_acc = finny_refresh(child_pos, net, Color::Black, new_bucket, &mut state.ft);
+                state.black_acc = fresh_acc;
+                state.black_bucket = new_bucket;
+            }
         }
 
         delta.is_refresh = true;
@@ -340,22 +381,23 @@ pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUESta
         let stm = delta.refresh_color;
 
         match stm {
-            Color::White => state.black_acc.apply_feature_updates(
-                &delta.black_removed[..delta.n_removed as usize],
-                &delta.black_added[..delta.n_added as usize],
-                net,
-            ),
-            Color::Black => state.white_acc.apply_feature_updates(
-                &delta.white_removed[..delta.n_removed as usize],
-                &delta.white_added[..delta.n_added as usize],
-                net,
-            ),
+            Color::White => state.black_acc.apply_feature_updates(&delta.black_removed[..delta.n_removed as usize], &delta.black_added[..delta.n_added as usize], net),
+            Color::Black => state.white_acc.apply_feature_updates(&delta.white_removed[..delta.n_removed as usize], &delta.white_added[..delta.n_added as usize], net)
         }
 
-        let (fresh_acc, fresh_bucket) = accumulator_for_perspective(pos, net, stm);
+        let old_bucket = get_bucket(pos.board(), stm);
+
         match stm {
-            Color::White => { state.white_acc = fresh_acc; state.white_bucket = fresh_bucket; }
-            Color::Black => { state.black_acc = fresh_acc; state.black_bucket = fresh_bucket; }
+            Color::White => {
+                let fresh_acc = finny_refresh(pos, net, Color::White, old_bucket, &mut state.ft);
+                state.white_acc = fresh_acc;
+                state.white_bucket = old_bucket;
+            }
+            Color::Black => {
+                let fresh_acc = finny_refresh(pos, net, Color::Black, old_bucket, &mut state.ft);
+                state.black_acc = fresh_acc;
+                state.black_bucket = old_bucket;
+            }
         }
         return;
     }
@@ -388,4 +430,14 @@ fn add_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type:
     delta.n_added += 1;
 }
 
-
+fn get_bb(board: &Board) -> [[Bitboard; 6]; 2] {
+    let mut bb = [[Bitboard::EMPTY; 6]; 2];
+    let white = board.white();
+    let black = board.black();
+    for role in [Role::Pawn, Role::Knight, Role::Bishop, Role::Rook, Role::Queen, Role::King] {
+        let role_bb = board.by_role(role);
+        bb[0][role_index(role)] = role_bb & white;
+        bb[1][role_index(role)] = role_bb & black;
+    }
+    bb
+}
