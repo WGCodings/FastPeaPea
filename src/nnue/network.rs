@@ -38,7 +38,9 @@ pub struct BucketInfo {
 fn get_bucket(board: &Board, perspective: Color) -> BucketInfo {
     let king_sq = board.king_of(perspective).unwrap();
     let mut sq_idx = king_sq.to_usize();
-
+    if perspective == Color::Black {
+        sq_idx ^= 0b111000;
+    }
     let file = sq_idx & 0b111;
     let rank = sq_idx >> 3;
     let mirror = file >= 4;
