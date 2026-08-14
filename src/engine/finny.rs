@@ -16,7 +16,7 @@ impl FinnyEntry {
 }
 
 pub struct FinnyTable {
-    entries: [FinnyEntry; NUM_INPUT_BUCKETS * 2],
+    entries: [FinnyEntry; NUM_INPUT_BUCKETS * 4],
 }
 
 impl FinnyTable {
@@ -25,7 +25,7 @@ impl FinnyTable {
     }
 
     /// Get finny entry. 0 - NUM_INPUT_BUCKETS-1 for black and the rest for white finny tables
-    pub(crate) fn get_entry(&mut self, perspective: Color, bucket: usize) -> &mut FinnyEntry {
-        &mut self.entries[usize::from(perspective) * NUM_INPUT_BUCKETS + bucket]
+    pub(crate) fn get_entry(&mut self, perspective: Color, bucket: usize, is_mirrored : bool) -> &mut FinnyEntry {
+        &mut self.entries[(usize::from(perspective) * 2 + usize::from(is_mirrored)) * NUM_INPUT_BUCKETS + bucket]
     }
 }
