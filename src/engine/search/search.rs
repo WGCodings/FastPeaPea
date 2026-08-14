@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use shakmaty::{Bitboard, Chess, EnPassantMode, Move, Position};
 use shakmaty::zobrist::{Zobrist64};
 use crate::engine::eval::evaluate;
-use crate::engine::search::context::{make_move_nnue, make_null_move_nnue, unmake_move_nnue, unmake_null_move_nnue, SearchContext};
+use crate::engine::search::context::{make_move_nnue, unmake_move_nnue, SearchContext};
 use crate::engine::search::pv::PvTable;
 use crate::engine::search::see::see;
 use crate::engine::time_manager::TimeManager;
@@ -256,8 +256,6 @@ pub fn negamax(
 
         reduction = reduction.clamp(1,depth);
 
-        make_null_move_nnue(&mut ctx.nnue);
-
         let child_pos = pos.clone().swap_turn().unwrap();
 
         let hash_child = child_pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
@@ -266,8 +264,6 @@ pub fn negamax(
         let score = -negamax(&child_pos, ctx, depth - reduction, ply + 1, -beta, -beta + 1, false, false, &mut PvTable::new());
 
         //TODO add verification
-
-        unmake_null_move_nnue(&mut ctx.nnue);
 
         ctx.decrease_history();
 
@@ -387,7 +383,7 @@ pub fn negamax(
                 continue;
             }
 
-            make_move_nnue(pos, &mv, &mut ctx.nnue);
+            make_move_nnue(pos, &child_pos, &mv, &ctx.network ,&mut ctx.nnue);
 
             ctx.stack.moves[ply] = Some(mv);
 
@@ -405,7 +401,7 @@ pub fn negamax(
 
             ctx.decrease_history();
 
-            unmake_move_nnue(ctx.network, &mut ctx.nnue);
+            unmake_move_nnue(pos, ctx.network, &mut ctx.nnue);
 
             ctx.stack.moves[ply] = None;
 
@@ -594,7 +590,7 @@ pub fn negamax(
 
 
 
-        make_move_nnue(pos, &mv, &mut ctx.nnue);
+        make_move_nnue(pos, &child_pos,&mv, &ctx.network, &mut ctx.nnue);
 
         let hash_child = child_pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
 
@@ -669,7 +665,7 @@ pub fn negamax(
         ctx.stack.moves[ply] = None;
 
         ctx.decrease_history();
-        unmake_move_nnue(ctx.network, &mut ctx.nnue);
+        unmake_move_nnue(pos, ctx.network, &mut ctx.nnue);
 
         if score > best_score {
             best_score = score;
@@ -804,12 +800,12 @@ pub fn quiescence(
         if see <0{
             continue;
         }
-
-        make_move_nnue(pos, &mv, &mut ctx.nnue);
-
+        
         let mut child = pos.clone();
 
         child.play_unchecked(mv);
+
+        make_move_nnue(pos, &child, &mv, &ctx.network, &mut ctx.nnue);
 
         let child_hash = child.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
 
@@ -819,7 +815,7 @@ pub fn quiescence(
 
         ctx.decrease_history();
 
-        unmake_move_nnue(ctx.network, &mut ctx.nnue);
+        unmake_move_nnue(pos, ctx.network, &mut ctx.nnue);
 
         if score >= beta {
             //node_type = Bound::Lower;

@@ -8,7 +8,7 @@ use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::search::search::SearchStats;
 use crate::engine::tt::TranspositionTable;
-use crate::nnue::network::{accumulators_from_position, calculate_index, role_index, Accumulator, Network};
+use crate::nnue::network::{accumulator_for_perspective, calculate_index, get_bucket, role_index, Accumulator, Network};
 
 // Keep track of move, eval and nr of double ext per ply.
 pub struct Stack {
@@ -147,21 +147,24 @@ impl<'a> SearchContext<'a> {
 // =====================================================================================================================//
 #[derive(Clone, Copy)]
 pub struct AccumulatorDelta {
-    removed: [(usize, usize); 2],
-    added:   [(usize, usize); 2],
+    white_removed: [usize; 2],
+    white_added: [usize; 2],
+    black_removed: [usize; 2],
+    black_added: [usize; 2],
     n_removed: u8,
     n_added: u8,
-    is_clean : bool
+    is_refresh: bool,
+    refresh_color: Color
 }
 
 impl AccumulatorDelta {
     fn default() -> Self {
         Self {
-            removed: [(0, 0); 2],
-            added: [(0, 0); 2],
-            n_removed: 0,
-            n_added: 0,
-            is_clean: false,
+            white_removed: [0; 2], white_added: [0; 2],
+            black_removed: [0; 2], black_added: [0; 2],
+            n_removed: 0, n_added: 0,
+            is_refresh: false,
+            refresh_color: Color::White,
         }
     }
 }
@@ -171,19 +174,19 @@ impl AccumulatorDelta {
 // =====================================================================================================================//
 
 pub struct NNUEState {
-    pub us: Accumulator,
-    pub them: Accumulator,
+    pub white_acc: Accumulator,
+    pub black_acc: Accumulator,
+    pub white_bucket: usize,
+    pub black_bucket: usize,
     pub stack: Vec<AccumulatorDelta>,
+    pub applied: usize,
 }
 
 impl NNUEState {
     pub fn new<P: Position>(pos: &P, net: &Network) -> Self {
-        let (us, them) = accumulators_from_position(pos, net);
-        Self {
-            us,
-            them,
-            stack: Vec::with_capacity(64),
-        }
+        let (white_acc, white_bucket) = accumulator_for_perspective(pos, net, Color::White);
+        let (black_acc, black_bucket) = accumulator_for_perspective(pos, net, Color::Black);
+        Self { white_acc, black_acc, white_bucket, black_bucket, stack: Vec::with_capacity(64), applied: 0 }
     }
 }
 
@@ -192,164 +195,76 @@ impl NNUEState {
 // =====================================================================================================================//
 
 #[inline(always)]
-pub fn unmake_move_nnue(net: &Network, state: &mut NNUEState) {
-    let delta = state.stack.pop().unwrap();
-
-    // No need to do anything if the accumulator delta is not clean
-    if delta.is_clean {
-        std::mem::swap(&mut state.us, &mut state.them);
-
-        let mut us_add = [0usize; 2];
-        let mut us_rem = [0usize; 2];
-        let mut them_add = [0usize; 2];
-        let mut them_rem = [0usize; 2];
-
-        for k in 0..delta.n_added as usize {
-            us_rem[k] = delta.added[k].0;
-            them_rem[k] = delta.added[k].1;
-        }
-        for k in 0..delta.n_removed as usize {
-            us_add[k] = delta.removed[k].0;
-            them_add[k] = delta.removed[k].1;
-        }
-
-        state.us.apply_feature_updates(&us_add[..delta.n_removed as usize], &us_rem[..delta.n_added as usize], net);
-        state.them.apply_feature_updates(&them_add[..delta.n_removed as usize], &them_rem[..delta.n_added as usize], net);
-    }
-
-}
-
-#[inline(always)]
-pub fn make_null_move_nnue(state: &mut NNUEState) {
-    let delta = AccumulatorDelta::default();
-
-    state.stack.push(delta);
-    //std::mem::swap(&mut state.us, &mut state.them);
-}
-
-#[inline(always)]
-pub fn unmake_null_move_nnue(state: &mut NNUEState) {
-    let delta = state.stack.pop().unwrap();
-
-    if delta.is_clean {
-        std::mem::swap(&mut state.us, &mut state.them);
-    }
-
-}
-
-#[inline(always)]
 /// Loop over the accumulator delta stack until you find a clean one. Then do incremental updates from that point back to the current accumulator.
 pub fn clean_accumulator(
     net: &Network,
     state: &mut NNUEState){
 
-    let mut start = state.stack.len();
-    while start > 0 && !state.stack[start - 1].is_clean {
-        start -= 1;
+    if state.applied == state.stack.len() {
+        return;
     }
-
-    // loop over acc stack to apply all dirty updates
-    for i in start..state.stack.len() {
-
-
+    for i in state.applied..state.stack.len() {
         let delta = state.stack[i];
 
-        let mut us_add = [0usize; 2];
-        let mut us_rem = [0usize; 2];
-        let mut them_add = [0usize; 2];
-        let mut them_rem = [0usize; 2];
+        if delta.is_refresh { continue; }
 
-        for k in 0..delta.n_added as usize {
-            us_add[k] = delta.added[k].0;
-            them_add[k] = delta.added[k].1;
-        }
-        for k in 0..delta.n_removed as usize {
-            us_rem[k] = delta.removed[k].0;
-            them_rem[k] = delta.removed[k].1;
-        }
-
-        state.us.apply_feature_updates(&us_add[..delta.n_added as usize], &us_rem[..delta.n_removed as usize], net);
-        state.them.apply_feature_updates(&them_add[..delta.n_added as usize], &them_rem[..delta.n_removed as usize], net);
-
-        // if applied, it is clean
-        state.stack[i].is_clean = true;
-        std::mem::swap(&mut state.us, &mut state.them);
-        }
+        state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net);
+        state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net);
+    }
+    state.applied = state.stack.len();
     }
 
-
+/// Check if a move is a king move
+/// TODO Later add only check if it is moving to new bucket
+#[inline(always)]
+fn is_king_move<P: Position>(mv: &Move) -> bool {
+    match *mv {
+        Move::Normal { role, .. } => role == Role::King,
+        Move::Castle { .. } => true,
+        _ => false,
+    }
+}
 
 
 
 #[inline(always)]
-pub fn make_move_nnue<P: Position>(
-    pos: &P,
-    mv: &Move,
-    state: &mut NNUEState,
-) {
+pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, net: &Network, state: &mut NNUEState) {
     let mut delta = AccumulatorDelta::default();
-
-    // record all changes to accumulator inside these lists to apply them fused later
-    let mut us_add = [0usize; 2];
-    let mut us_rem = [0usize; 2];
-    let mut them_add = [0usize; 2];
-    let mut them_rem = [0usize; 2];
-
-    let perspective = pos.turn();
     let board = pos.board();
+    let white_bucket = state.white_bucket;
+    let black_bucket = state.black_bucket;
 
     match *mv {
-
-        // ============================================================
-        // NORMAL MOVE (may include capture + promotion)
-        // ============================================================
         Move::Normal { from, to, promotion, .. } => {
             let piece = board.piece_at(from).unwrap();
             let side = if piece.color == Color::White { 0 } else { 1 };
-            let from_sq = from.to_usize();
-            let to_sq = to.to_usize();
             let piece_type = role_index(piece.role);
 
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective);
+            remove_feature(&mut delta, side, from.to_usize(), piece_type, white_bucket, black_bucket);
 
             if let Some(captured) = board.piece_at(to) {
                 let cap_side = if captured.color == Color::White { 0 } else { 1 };
                 let cap_type = role_index(captured.role);
-
-                remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, to_sq, cap_type, perspective);
+                remove_feature(&mut delta, cap_side, to.to_usize(), cap_type, white_bucket, black_bucket);
             }
 
-            let final_role = promotion.unwrap_or(piece.role);
-            let final_type = role_index(final_role);
-
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, final_type, perspective);
+            let final_type = role_index(promotion.unwrap_or(piece.role));
+            add_feature(&mut delta, side, to.to_usize(), final_type, white_bucket, black_bucket);
         }
 
-        // ============================================================
-        // EN PASSANT
-        // ============================================================
         Move::EnPassant { from, to } => {
             let piece = board.piece_at(from).unwrap();
             let side = if piece.color == Color::White { 0 } else { 1 };
-
-            let from_sq = from.to_usize();
-            let to_sq = to.to_usize();
             let piece_type = role_index(Role::Pawn);
 
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, from_sq, piece_type, perspective);
+            remove_feature(&mut delta, side, from.to_usize(), piece_type, white_bucket, black_bucket);
 
-            let captured_sq = Square::from_coords(to.file(), from.rank());
-            let cap_sq = captured_sq.to_usize();
-            let cap_side = 1 - side;
+            let cap_sq = Square::from_coords(to.file(), from.rank()).to_usize();
+            remove_feature(&mut delta, 1 - side, cap_sq, piece_type, white_bucket, black_bucket);
 
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, cap_side, cap_sq, piece_type, perspective);
-
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, to_sq, piece_type, perspective);
+            add_feature(&mut delta, side, to.to_usize(), piece_type, white_bucket, black_bucket);
         }
 
-        // ============================================================
-        // CASTLING
-        // ============================================================
         Move::Castle { king, rook } => {
             let piece = board.piece_at(king).unwrap();
             let side = if piece.color == Color::White { 0 } else { 1 };
@@ -357,27 +272,96 @@ pub fn make_move_nnue<P: Position>(
             let king_from = king.to_usize();
             let rook_from = rook.to_usize();
             let kingside = rook.file() > king.file();
-
             let king_to = if kingside { king_from + 2 } else { king_from - 2 };
             let rook_to = if kingside { king_from + 1 } else { king_from - 1 };
 
-            let king_type = role_index(Role::King);
-            let rook_type = role_index(Role::Rook);
-
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, king_from, king_type, perspective);
-            remove_feature(&mut delta, &mut us_rem, &mut them_rem, side, rook_from, rook_type, perspective);
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, king_to, king_type, perspective);
-            add_feature(&mut delta, &mut us_add, &mut them_add, side, rook_to, rook_type, perspective);
+            remove_feature(&mut delta, side, king_from, role_index(Role::King), white_bucket, black_bucket);
+            remove_feature(&mut delta, side, rook_from, role_index(Role::Rook), white_bucket, black_bucket);
+            add_feature(&mut delta, side, king_to, role_index(Role::King), white_bucket, black_bucket);
+            add_feature(&mut delta, side, rook_to, role_index(Role::Rook), white_bucket, black_bucket);
         }
         _ => {}
     }
 
-    // Apply all fused updates to accumulator at once
-    //state.us.apply_feature_updates(&us_add[..delta.n_added as usize], &us_rem[..delta.n_removed as usize], net);
-    //state.them.apply_feature_updates(&them_add[..delta.n_added as usize], &them_rem[..delta.n_removed as usize], net);
+    if is_king_move::<P>(mv) {
+        let stm = pos.turn();
+
+        let new_bucket = get_bucket(child_pos.board(), stm);
+        let old_bucket = match stm { Color::White => white_bucket, Color::Black => black_bucket};
+
+        // If bucket doesnt change, we dont need refresh ofc
+        if new_bucket == old_bucket {
+            state.stack.push(delta);
+            return;
+        }
+
+        clean_accumulator(net, state);
+
+        match stm {
+            Color::White => state.black_acc.apply_feature_updates(
+                &delta.black_added[..delta.n_added as usize],
+                &delta.black_removed[..delta.n_removed as usize],
+                net,
+            ),
+            Color::Black => state.white_acc.apply_feature_updates(
+                &delta.white_added[..delta.n_added as usize],
+                &delta.white_removed[..delta.n_removed as usize],
+                net,
+            ),
+        }
+
+        let (fresh_acc, fresh_bucket) = accumulator_for_perspective(child_pos, net, stm);
+        match stm {
+            Color::White => { state.white_acc = fresh_acc; state.white_bucket = fresh_bucket; }
+            Color::Black => { state.black_acc = fresh_acc; state.black_bucket = fresh_bucket; }
+        }
+
+        delta.is_refresh = true;
+        delta.refresh_color = stm;
+        state.stack.push(delta);
+        state.applied += 1;
+        return;
+    }
 
     state.stack.push(delta);
-    //std::mem::swap(&mut state.us, &mut state.them);
+}
+
+#[inline(always)]
+pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUEState) {
+    let is_clean = state.applied == state.stack.len();
+    let delta = state.stack.pop().unwrap();
+
+    if !is_clean {
+        return;
+    }
+    state.applied -= 1;
+
+    if delta.is_refresh {
+        let stm = delta.refresh_color;
+
+        match stm {
+            Color::White => state.black_acc.apply_feature_updates(
+                &delta.black_removed[..delta.n_removed as usize],
+                &delta.black_added[..delta.n_added as usize],
+                net,
+            ),
+            Color::Black => state.white_acc.apply_feature_updates(
+                &delta.white_removed[..delta.n_removed as usize],
+                &delta.white_added[..delta.n_added as usize],
+                net,
+            ),
+        }
+
+        let (fresh_acc, fresh_bucket) = accumulator_for_perspective(pos, net, stm);
+        match stm {
+            Color::White => { state.white_acc = fresh_acc; state.white_bucket = fresh_bucket; }
+            Color::Black => { state.black_acc = fresh_acc; state.black_bucket = fresh_bucket; }
+        }
+        return;
+    }
+
+    state.white_acc.apply_feature_updates(&delta.white_removed[..delta.n_removed as usize], &delta.white_added[..delta.n_added as usize], net);
+    state.black_acc.apply_feature_updates(&delta.black_removed[..delta.n_removed as usize], &delta.black_added[..delta.n_added as usize], net);
 }
 
 
@@ -386,41 +370,21 @@ pub fn make_move_nnue<P: Position>(
 // HELPER FUNCTION TO ACTIVATE AND DEACTIVATE FEATURES INTO FUSED UPDATES                                               //
 // =====================================================================================================================//
 
-fn remove_feature(
-    delta: &mut AccumulatorDelta,
-    us_rem: &mut [usize; 2],
-    them_rem: &mut [usize; 2],
-    side: usize,
-    sq: usize,
-    piece_type: usize,
-    perspective: Color,
-) {
-    let us_idx = calculate_index(side, sq, piece_type, perspective);
-    let them_idx = calculate_index(side, sq, piece_type, !perspective);
-
+fn remove_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_bucket: usize, black_bucket: usize) {
+    let white_idx = calculate_index(side, sq, piece_type, Color::White, white_bucket);
+    let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_bucket);
     let n = delta.n_removed as usize;
-    us_rem[n] = us_idx;
-    them_rem[n] = them_idx;
-    delta.removed[n] = (us_idx, them_idx);
+    delta.white_removed[n] = white_idx;
+    delta.black_removed[n] = black_idx;
     delta.n_removed += 1;
 }
 
-fn add_feature(
-    delta: &mut AccumulatorDelta,
-    us_add: &mut [usize; 2],
-    them_add: &mut [usize; 2],
-    side: usize,
-    sq: usize,
-    piece_type: usize,
-    perspective: Color,
-) {
-    let us_idx = calculate_index(side, sq, piece_type, perspective);
-    let them_idx = calculate_index(side, sq, piece_type, !perspective);
-
+fn add_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_bucket: usize, black_bucket: usize) {
+    let white_idx = calculate_index(side, sq, piece_type, Color::White, white_bucket);
+    let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_bucket);
     let n = delta.n_added as usize;
-    us_add[n] = us_idx;
-    them_add[n] = them_idx;
-    delta.added[n] = (us_idx, them_idx);
+    delta.white_added[n] = white_idx;
+    delta.black_added[n] = black_idx;
     delta.n_added += 1;
 }
 

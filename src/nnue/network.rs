@@ -5,9 +5,12 @@ const QB: i16 = 64;
 
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
+const KING_BUCKET_LAYOUT: [usize; 64] =  [0;64];
+const NUM_INPUT_BUCKETS: usize = 1;
+
 use std::arch::x86_64::*;
 
-use shakmaty::{Chess, Color, Position, Role};
+use shakmaty::{Board, Chess, Color, Position, Role};
 
 static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/quantised.bin")) };
 
@@ -15,48 +18,43 @@ static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/
 // NNUE NETWORK IS TRAINED BY THE BULLET CRATE AND CODE HAS BEEN REUSED FROM ONE OF THE EXAMPLES TO DO THE INFERENCE
 // =====================================================================================================================//
 
-#[inline(always)]
-pub fn accumulators_from_position<P: Position>(
-    pos: &P,
-    net: &Network,
-) -> (Accumulator, Accumulator) {
-    let mut us = Accumulator::new(net);
-    let mut them = Accumulator::new(net);
 
-    let perspective = pos.turn();
-
-    for square in shakmaty::Square::ALL {
-
-        if let Some(piece) = pos.board().piece_at(square) {
-
-            let sq_idx = shakmaty::Square::to_usize(square);
-
-            let piece_type : usize = role_index(piece.role); // 0 for pawn, 1 for knight etc
-
-            let side : usize = if piece.color == Color::White {0} else {1};
-
-            let feature_index_stm = calculate_index(side,sq_idx,piece_type,perspective);
-            let feature_index_nstm = calculate_index(side,sq_idx,piece_type,!perspective);
-
-
-            us.add_feature(feature_index_stm, net);
-
-            them.add_feature(feature_index_nstm, net);
-
-        }
-    }
-
-    (us, them)
-}
-#[inline(always)]
-pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type : usize, perspective : Color) -> usize{
+/// Returns the bucketinfo for a given color/perspective and the current board.
+pub fn get_bucket(board: &Board, perspective: Color) -> usize {
+    let king_sq = board.king_of(perspective).unwrap();
+    let mut sq_idx = king_sq.to_usize();
     if perspective == Color::Black {
-        side = 1-side;
         sq_idx ^= 0b111000;
     }
-    (side*6 + piece_type)*64 + sq_idx
-
+    KING_BUCKET_LAYOUT[sq_idx]
 }
+
+#[inline(always)]
+pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize) -> usize {
+    if perspective == Color::Black {
+        side = 1 - side;
+        sq_idx ^= 56;
+    }
+    bucket * 768 + side * 384 + piece_type * 64 + sq_idx
+}
+
+#[inline(always)]
+pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspective: Color) -> (Accumulator, usize) {
+    let mut acc = Accumulator::new(net);
+    let board = pos.board();
+    let bucket = get_bucket(board, perspective);
+
+    for square in shakmaty::Square::ALL {
+        if let Some(piece) = board.piece_at(square) {
+            let sq_idx = shakmaty::Square::to_usize(square);
+            let piece_type = role_index(piece.role);
+            let side = if piece.color == Color::White { 0 } else { 1 };
+            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, bucket), net);
+        }
+    }
+    (acc, bucket)
+}
+
 #[inline(always)]
 pub fn role_index(role: Role) -> usize {
     match role {
@@ -83,7 +81,7 @@ pub fn screlu(x: i16) -> i32 {
 pub struct Network {
     /// Column-Major `HIDDEN_SIZE x 768` matrix.
     /// Values have quantization of QA.
-    feature_weights: [Accumulator; 768],
+    feature_weights: [Accumulator; 768 * NUM_INPUT_BUCKETS],
     /// Vector with dimension `HIDDEN_SIZE`.
     /// Values have quantization of QA.
     feature_bias: Accumulator,
