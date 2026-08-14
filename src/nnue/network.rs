@@ -5,7 +5,7 @@ const QB: i16 = 64;
 
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
-const KING_BUCKET_LAYOUT: [usize; 64] =  [
+const OLD_KING_BUCKET_LAYOUT: [usize; 64] =  [
     0, 0, 1, 1, 1, 1, 0, 0,
     2, 2, 2, 2, 2, 2, 2, 2,
     3, 3, 3, 3, 3, 3, 3, 3,
@@ -15,7 +15,10 @@ const KING_BUCKET_LAYOUT: [usize; 64] =  [
     3, 3, 3, 3, 3, 3, 3, 3,
     3, 3, 3, 3, 3, 3, 3, 3,
 ];
-pub const NUM_INPUT_BUCKETS: usize = 4;
+
+const KING_BUCKET_LAYOUT: [usize; 64] =  [0;64];
+
+pub const NUM_INPUT_BUCKETS: usize = 1;
 
 use std::arch::x86_64::*;
 
