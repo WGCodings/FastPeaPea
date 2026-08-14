@@ -5,14 +5,15 @@ const QB: i16 = 64;
 
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
-const KING_BUCKET_LAYOUT: [usize; 64] =  [0;64];
-const NUM_INPUT_BUCKETS: usize = 1;
+const KING_BUCKET_LAYOUT: [usize; 64] =  [0;64
+];
+pub const NUM_INPUT_BUCKETS: usize = 1;
 
 use std::arch::x86_64::*;
 
 use shakmaty::{Board, Chess, Color, Position, Role};
 
-static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/quantised.bin")) };
+static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/kb/quantised.bin")) };
 
 // =====================================================================================================================//
 // NNUE NETWORK IS TRAINED BY THE BULLET CRATE AND CODE HAS BEEN REUSED FROM ONE OF THE EXAMPLES TO DO THE INFERENCE
