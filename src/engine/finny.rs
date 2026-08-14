@@ -1,7 +1,7 @@
 use shakmaty::{Bitboard, Color};
-use crate::nnue::network::{Accumulator, Network};
+use crate::nnue::network::{Accumulator, Network, NUM_INPUT_BUCKETS};
 
-const NUM_INPUT_BUCKETS: usize = 8;
+
 
 #[derive(Clone, Copy)]
 pub struct FinnyEntry {
