@@ -1,4 +1,4 @@
-const HIDDEN_SIZE: usize = 1024;
+const HIDDEN_SIZE: usize = 2048;
 const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
