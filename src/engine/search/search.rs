@@ -383,7 +383,7 @@ pub fn negamax(
                 continue;
             }
 
-            make_move_nnue(pos, &child_pos, &mv, &ctx.network ,&mut ctx.nnue);
+            make_move_nnue(pos, &child_pos, &mv ,&mut ctx.nnue);
 
             ctx.stack.moves[ply] = Some(mv);
 
@@ -590,7 +590,7 @@ pub fn negamax(
 
 
 
-        make_move_nnue(pos, &child_pos,&mv, &ctx.network, &mut ctx.nnue);
+        make_move_nnue(pos, &child_pos,&mv, &mut ctx.nnue);
 
         let hash_child = child_pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
 
@@ -805,7 +805,7 @@ pub fn quiescence(
 
         child.play_unchecked(mv);
 
-        make_move_nnue(pos, &child, &mv, &ctx.network, &mut ctx.nnue);
+        make_move_nnue(pos, &child, &mv, &mut ctx.nnue);
 
         let child_hash = child.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0;
 

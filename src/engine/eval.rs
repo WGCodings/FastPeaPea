@@ -9,12 +9,12 @@ use crate::nnue::network::{accumulator_for_perspective, Network};
 // =====================================================================================================================//
 pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
 
-    clean_accumulator(net, state);
+    clean_accumulator(pos, net, state);
 
     /*
 
-    let (fresh_white, fresh_white_bucket) = accumulator_for_perspective(pos, net, Color::White);
-    let (fresh_black, fresh_black_bucket) = accumulator_for_perspective(pos, net, Color::Black);
+    let (fresh_white, fresh_white_bucket, _) =  accumulator_for_perspective(pos, net, Color::White);
+    let (fresh_black, fresh_black_bucket, _) = accumulator_for_perspective(pos, net, Color::Black);
 
     if state.white_acc.vals != fresh_white.vals
         || state.black_acc.vals != fresh_black.vals
@@ -26,6 +26,7 @@ pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
             pos.board(), state.white_bucket, fresh_white_bucket, state.black_bucket, fresh_black_bucket
         );
     }
+
      */
     
     let (us, them) = match pos.turn() {

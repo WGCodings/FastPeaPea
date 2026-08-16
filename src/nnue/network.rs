@@ -19,40 +19,48 @@ static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/
 // =====================================================================================================================//
 
 
-/// Returns the bucketinfo for a given color/perspective and the current board.
-pub fn get_bucket(board: &Board, perspective: Color) -> usize {
+/// Returns the bucket
+pub fn get_bucket(board: &Board, perspective: Color) -> (usize,bool) {
     let king_sq = board.king_of(perspective).unwrap();
     let mut sq_idx = king_sq.to_usize();
     if perspective == Color::Black {
-        sq_idx ^= 0b111000;
+        sq_idx ^= 56;
     }
-    KING_BUCKET_LAYOUT[sq_idx]
+
+    let is_mirrored = sq_idx % 8 > 3;
+
+    (KING_BUCKET_LAYOUT[sq_idx],is_mirrored)
 }
 
 #[inline(always)]
-pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize) -> usize {
+pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize, is_mirrored : bool) -> usize {
     if perspective == Color::Black {
         side = 1 - side;
         sq_idx ^= 56;
     }
+
+    if is_mirrored{
+        sq_idx ^= 7;
+    }
+
     bucket * 768 + side * 384 + piece_type * 64 + sq_idx
 }
 
 #[inline(always)]
-pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspective: Color) -> (Accumulator, usize) {
+pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspective: Color) -> (Accumulator, usize, bool) {
     let mut acc = Accumulator::new(net);
     let board = pos.board();
-    let bucket = get_bucket(board, perspective);
+    let (bucket, is_mirrored) = get_bucket(board, perspective);
 
     for square in shakmaty::Square::ALL {
         if let Some(piece) = board.piece_at(square) {
             let sq_idx = shakmaty::Square::to_usize(square);
             let piece_type = role_index(piece.role);
             let side = if piece.color == Color::White { 0 } else { 1 };
-            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, bucket), net);
+            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, bucket, is_mirrored), net);
         }
     }
-    (acc, bucket)
+    (acc, bucket, is_mirrored)
 }
 
 #[inline(always)]
