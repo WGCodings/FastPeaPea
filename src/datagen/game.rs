@@ -60,7 +60,7 @@ pub fn run_game(
     if pos.legal_moves().is_empty() { return vec![]; }
 
     // ---------------------------------------------------------------- //
-    // Game loop — play until natural game end                          //
+    // Game loo                       //
     // ---------------------------------------------------------------- //
 
     let mut first_move = true;
@@ -69,7 +69,6 @@ pub fn run_game(
     let wdl = loop {
         let legal_moves = pos.legal_moves();
 
-        // --- Terminal conditions ---
         if legal_moves.is_empty() { break terminal_wdl(&pos);}
         if pos.is_insufficient_material() { break 0.5; }
         if pos.halfmoves() >= 100 { break 0.5;  }
@@ -131,9 +130,6 @@ pub fn run_game(
             break adj_wdl;
         }
 
-
-
-        // --- Filter and collect --- //
         if filter_position(&pos, &best_move, score as i16, MATE_THRESHOLD) == FilterResult::Keep {
             collected.push(RawPosition {
                 fen:       pos_to_fen(&pos),
@@ -146,7 +142,6 @@ pub fn run_game(
             });
         }
 
-        // --- Play move ---
         repetition_stack.push(pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal).0);
         pos.play_unchecked(best_move);
     };
