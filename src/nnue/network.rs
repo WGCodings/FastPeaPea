@@ -1,4 +1,5 @@
 const HIDDEN_SIZE: usize = 1536;
+const HALF: usize = HIDDEN_SIZE / 2;
 const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
@@ -93,6 +94,11 @@ pub fn screlu(x: i16) -> i32 {
     y * y
 }
 
+#[inline]
+fn crelu(x: i16) -> i32 {
+    i32::from(x).clamp(0, i32::from(QA))
+}
+
 /// This is the quantised format that bullet outputs.
 #[repr(C)]
 pub struct Network {
@@ -106,7 +112,7 @@ pub struct Network {
     /// matrix, we use it like this to make the
     /// code nicer in `Network::evaluate`.
     /// Values have quantization of QB.
-    output_weights: [i16; 2 * HIDDEN_SIZE*NUM_OUTPUT_BUCKETS],
+    output_weights: [i16; HIDDEN_SIZE*NUM_OUTPUT_BUCKETS],
     /// Scalar output bias.
     /// Value has quantization of QA * QB.
     output_bias: [i16;NUM_OUTPUT_BUCKETS]
@@ -119,46 +125,46 @@ impl Network {
     pub fn evaluate(&self, us: &Accumulator, them: &Accumulator, pos : &Chess) -> i32 {
         let mut output = 0;
         let bucket = self.bucket(pos);
-        let offset = bucket * 2 * HIDDEN_SIZE;
+        let offset = bucket * HIDDEN_SIZE;
 
-        let us_weights = &self.output_weights[offset .. offset + HIDDEN_SIZE];
-        let them_weights = &self.output_weights[offset + HIDDEN_SIZE .. offset + 2 * HIDDEN_SIZE];
+        let us_weights = &self.output_weights[offset .. offset + HALF];
+        let them_weights = &self.output_weights[offset + HALF .. offset + HIDDEN_SIZE];
 
-        // Side-To-Move
-        for (&input, &weight) in us.vals.iter().zip(us_weights) {
-            output += screlu(input) * i32::from(weight);
+        for i in 0..HALF {
+            let a = crelu(us.vals[i]);
+            let b = crelu(us.vals[i + HALF]);
+            output += a * b * i32::from(us_weights[i]);
         }
-
-        // Not-Side-To-Move
-        for (&input, &weight) in them.vals.iter().zip(them_weights) {
-            output += screlu(input) * i32::from(weight);
+        for i in 0..HALF {
+            let a = crelu(them.vals[i]);
+            let b = crelu(them.vals[i + HALF]);
+            output += a * b * i32::from(them_weights[i]);
         }
 
         output /= i32::from(QA);
-
         output += i32::from(self.output_bias[bucket]);
-
         output *= SCALE;
-
         output /= i32::from(QA) * i32::from(QB);
-
         output
     }
 
     #[cfg(target_feature = "avx2")]
     pub fn evaluate(&self, us: &Accumulator, them: &Accumulator, pos: &Chess) -> i32 {
         let bucket = self.bucket(pos);
-        let offset = bucket * 2 * HIDDEN_SIZE;
-        let us_weights = &self.output_weights[offset..offset + HIDDEN_SIZE];
-        let them_weights = &self.output_weights[offset + HIDDEN_SIZE..offset + 2 * HIDDEN_SIZE];
-        unsafe {
-            let zero = _mm256_setzero_si256();
-            let qa = _mm256_set1_epi16(QA);
+        let offset = bucket * HIDDEN_SIZE;
+        let us_weights = &self.output_weights[offset..offset + HALF];
+        let them_weights = &self.output_weights[offset + HALF..offset + HIDDEN_SIZE];
 
-            let sum = _mm256_add_epi32(Self::screlu_avx2(&us.vals, us_weights, zero, qa), Self::screlu_avx2(&them.vals, them_weights, zero, qa));
+        unsafe {
+            let zero = _mm_setzero_si128();
+            let qa = _mm_set1_epi16(QA);
+
+            let sum = _mm256_add_epi32(
+                Self::pairwise_dot_avx2(&us.vals, us_weights, zero, qa),
+                Self::pairwise_dot_avx2(&them.vals, them_weights, zero, qa),
+            );
 
             let mut output = Self::hsum_epi32(sum);
-
             output /= i32::from(QA);
             output += i32::from(self.output_bias[bucket]);
             output *= SCALE;
@@ -169,28 +175,29 @@ impl Network {
 
     #[cfg(target_feature = "avx2")]
     #[inline(always)]
-    unsafe fn screlu_avx2(
-        inputs: &[i16; HIDDEN_SIZE],
-        weights: &[i16],
-        zero: __m256i,
-        qa: __m256i,
-    ) -> __m256i {
+    unsafe fn pairwise_dot_avx2(inputs: &[i16; HIDDEN_SIZE], weights: &[i16], zero: __m128i, qa: __m128i) -> __m256i {
         let mut acc = _mm256_setzero_si256();
         let in_ptr = inputs.as_ptr();
         let w_ptr = weights.as_ptr();
 
-        for i in (0..HIDDEN_SIZE).step_by(16) {
-            let x = _mm256_load_si256(in_ptr.add(i) as *const __m256i);
-            let w = _mm256_loadu_si256(w_ptr.add(i) as *const __m256i);
+        for i in (0..HALF).step_by(8) {
 
-            let clamped = _mm256_min_epi16(_mm256_max_epi16(x, zero), qa);
-            let t = _mm256_mullo_epi16(clamped, w);
-            let prod = _mm256_madd_epi16(clamped, t);
+            let a16 = _mm_min_epi16(_mm_max_epi16(_mm_load_si128(in_ptr.add(i) as *const __m128i), zero), qa);
+            let b16 = _mm_min_epi16(_mm_max_epi16(_mm_load_si128(in_ptr.add(i + HALF) as *const __m128i), zero), qa);
 
-            acc = _mm256_add_epi32(acc, prod);
+            let a32 = _mm256_cvtepi16_epi32(a16);
+            let b32 = _mm256_cvtepi16_epi32(b16);
+            let prod = _mm256_mullo_epi32(a32, b32);
+
+            let w16 = _mm_loadu_si128(w_ptr.add(i) as *const __m128i);
+            let w32 = _mm256_cvtepi16_epi32(w16);
+            let term = _mm256_mullo_epi32(prod, w32);
+
+            acc = _mm256_add_epi32(acc, term);
         }
         acc
     }
+
     #[cfg(target_feature = "avx2")]
     #[inline(always)]
     unsafe fn hsum_epi32(v: __m256i) -> i32 {
@@ -203,6 +210,8 @@ impl Network {
         let sum32 = _mm_add_epi32(sum64, hi32);
         _mm_cvtsi128_si32(sum32)
     }
+
+
 
     pub fn load() -> &'static Network {
         &NNUE
