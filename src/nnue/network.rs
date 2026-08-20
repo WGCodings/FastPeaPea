@@ -15,6 +15,7 @@ const KING_BUCKET_LAYOUT: [usize; 64] =  [
     3, 3, 3, 3,3,3,3,3,
     3, 3, 3, 3,3,3,3,3
 ];
+const FEATURES_PER_BUCKET: usize = 768 + 4096;
 pub const NUM_INPUT_BUCKETS: usize = 4;
 
 use std::arch::x86_64::*;
@@ -52,7 +53,20 @@ pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, pe
         sq_idx ^= 7;
     }
 
-    bucket * 768 + side * 384 + piece_type * 64 + sq_idx
+    bucket * FEATURES_PER_BUCKET + side * 384 + piece_type * 64 + sq_idx
+}
+
+#[inline(always)]
+pub fn calculate_threat_index(mut attacker: usize, mut target: usize, perspective: Color, bucket: usize, is_mirrored: bool) -> usize {
+    if perspective == Color::Black {
+        attacker ^= 56;
+        target ^= 56;
+    }
+    if is_mirrored {
+        attacker ^= 7;
+        target ^= 7;
+    }
+    bucket * FEATURES_PER_BUCKET + 768 + attacker * 64 + target
 }
 
 #[inline(always)]
@@ -70,6 +84,23 @@ pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspect
         }
     }
     (acc, bucket, is_mirrored)
+}
+/// Adds trheat features to existing accumulator, later it should be done incrementally
+pub fn add_threat_features<P: Position>(pos: &P, net: &Network, perspective: Color, bucket: usize, is_mirrored: bool, acc: &mut Accumulator) {
+    let board = pos.board();
+
+    for square in shakmaty::Square::ALL {
+        if let Some(piece) = board.piece_at(square) {
+            let enemy_occ = board.by_color(!piece.color);
+            let attacks = board.attacks_from(square) & enemy_occ;
+
+            let attacker_sq = square.to_usize();
+            for target in attacks {
+                let idx = calculate_threat_index(attacker_sq, target.to_usize(), perspective, bucket, is_mirrored);
+                acc.add_feature(idx, net);
+            }
+        }
+    }
 }
 
 #[inline(always)]
@@ -98,7 +129,7 @@ pub fn screlu(x: i16) -> i32 {
 pub struct Network {
     /// Column-Major `HIDDEN_SIZE x 768` matrix.
     /// Values have quantization of QA.
-    feature_weights: [Accumulator; 768 * NUM_INPUT_BUCKETS],
+    feature_weights: [Accumulator; FEATURES_PER_BUCKET * NUM_INPUT_BUCKETS],
     /// Vector with dimension `HIDDEN_SIZE`.
     /// Values have quantization of QA.
     feature_bias: Accumulator,

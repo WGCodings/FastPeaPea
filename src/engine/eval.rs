@@ -2,44 +2,28 @@ use std::cmp::max;
 use shakmaty::{Bitboard, Chess, Color, Position, Role, Square};
 use crate::engine::search::context::{clean_accumulator, NNUEState};
 use crate::engine::types::{KBN_TABLE_DARK, KBN_TABLE_LIGHT, MATE_SCORE};
-use crate::nnue::network::{accumulator_for_perspective, Network};
+use crate::nnue::network::{accumulator_for_perspective, add_threat_features, Network};
 
 // =====================================================================================================================//
 // EVALUATE NNUE + MOPUP                                                                                                //
 // =====================================================================================================================//
 pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
-
     clean_accumulator(pos, net, state);
 
-    /*
-
-    let (fresh_white, fresh_white_bucket, _) =  accumulator_for_perspective(pos, net, Color::White);
-    let (fresh_black, fresh_black_bucket, _) = accumulator_for_perspective(pos, net, Color::Black);
-
-    if state.white_acc.vals != fresh_white.vals
-        || state.black_acc.vals != fresh_black.vals
-        || state.white_bucket != fresh_white_bucket
-        || state.black_bucket != fresh_black_bucket
-    {
-        panic!(
-            "NNUE desync! pos: {}  white_bucket: got {} expected {}  black_bucket: got {} expected {}",
-            pos.board(), state.white_bucket, fresh_white_bucket, state.black_bucket, fresh_black_bucket
-        );
-    }
-
-     */
-    
-    let (us, them) = match pos.turn() {
-        Color::White => (&state.white_acc, &state.black_acc),
-        Color::Black => (&state.black_acc, &state.white_acc),
+    let (mut us, us_bucket, us_mirrored, mut them, them_bucket, them_mirrored, us_persp) = match pos.turn() {
+        Color::White => (state.white_acc, state.white_bucket, state.white_is_mirrored,
+                         state.black_acc, state.black_bucket, state.black_is_mirrored, Color::White),
+        Color::Black => (state.black_acc, state.black_bucket, state.black_is_mirrored,
+                         state.white_acc, state.white_bucket, state.white_is_mirrored, Color::Black),
     };
 
-    let nnue_score= net.evaluate(us,them,pos);
+    add_threat_features(pos, net, us_persp, us_bucket, us_mirrored, &mut us);
+    add_threat_features(pos, net, !us_persp, them_bucket, them_mirrored, &mut them);
 
+    let nnue_score = net.evaluate(&us, &them, pos);
+    let mopup_score = mopup_evaluation(pos, nnue_score);
 
-    let mopup_score = mopup_evaluation(pos,nnue_score);
-
-    (nnue_score+mopup_score).clamp(-MATE_SCORE + 1000, MATE_SCORE - 1000)
+    (nnue_score + mopup_score).clamp(-MATE_SCORE + 1000, MATE_SCORE - 1000)
 }
 
 // =====================================================================================================================//
