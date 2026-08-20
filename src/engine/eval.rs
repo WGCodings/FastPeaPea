@@ -10,15 +10,15 @@ use crate::nnue::network::{accumulator_for_perspective, add_threat_features, Net
 pub fn evaluate(pos: &Chess, net: &Network, state: &mut NNUEState) -> i32 {
     clean_accumulator(pos, net, state);
 
-    let (mut us, us_bucket, us_mirrored, mut them, them_bucket, them_mirrored, us_persp) = match pos.turn() {
-        Color::White => (state.white_acc, state.white_bucket, state.white_is_mirrored,
-                         state.black_acc, state.black_bucket, state.black_is_mirrored, Color::White),
-        Color::Black => (state.black_acc, state.black_bucket, state.black_is_mirrored,
-                         state.white_acc, state.white_bucket, state.white_is_mirrored, Color::Black),
+    let (mut us, us_mirrored, mut them, them_mirrored, us_persp) = match pos.turn() {
+        Color::White => (state.white_acc, state.white_is_mirrored,
+                         state.black_acc, state.black_is_mirrored, Color::White),
+        Color::Black => (state.black_acc, state.black_is_mirrored,
+                         state.white_acc, state.white_is_mirrored, Color::Black),
     };
 
-    add_threat_features(pos, net, us_persp, us_bucket, us_mirrored, &mut us);
-    add_threat_features(pos, net, !us_persp, them_bucket, them_mirrored, &mut them);
+    add_threat_features(pos, net, us_persp, us_mirrored, &mut us);
+    add_threat_features(pos, net, !us_persp, them_mirrored, &mut them);
 
     let nnue_score = net.evaluate(&us, &them, pos);
     let mopup_score = mopup_evaluation(pos, nnue_score);
