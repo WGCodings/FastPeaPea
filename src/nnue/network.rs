@@ -6,17 +6,19 @@ const QB: i16 = 64;
 const NUM_OUTPUT_BUCKETS : usize = 8;
 
 const KING_BUCKET_LAYOUT: [usize; 64] =  [
-    0, 0, 1, 1,1,1,0,0,
-    2, 2, 2, 2,2,2,2,2,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3
+    0, 1, 2, 3,3,2,1,0,
+    4, 4, 5, 5,5,5,4,4,
+    6, 6, 6, 6,6,6,6,6,
+    7, 7, 7, 7,7,7,7,7,
+    8, 8, 8, 8,8,8,8,8,
+    8, 8, 8, 8,8,8,8,8,
+    9, 9, 9, 9,9,9,9,9,
+    9, 9, 9, 9,9,9,9,9
 ];
+
+pub const NUM_INPUT_BUCKETS: usize = 10;
 const THREAT_OFFSET: usize = 768 * NUM_INPUT_BUCKETS;
-pub const NUM_INPUT_BUCKETS: usize = 4;
+
 
 use std::arch::x86_64::*;
 
