@@ -12,7 +12,7 @@ struct ThreatIndexTest {
     expected_ntm: Vec<usize>,
 }
 
-fn active_indices(pos: &Chess, perspective: Color) -> Vec<usize> {
+fn _active_indices(pos: &Chess, perspective: Color) -> Vec<usize> {
     let board = pos.board();
     let (bucket, is_mirrored) = get_bucket(board, perspective);
     let mut out = Vec::new();
@@ -42,11 +42,11 @@ fn active_indices(pos: &Chess, perspective: Color) -> Vec<usize> {
 }
 
 #[test]
-fn threat_index_test_suite() {
+fn _threat_index_test_suite() {
     let raw = fs::read_to_string("assets/fens_threat_indices.csv")
         .expect("failed to read assets/fens_threat_indices.csv");
 
-    let tests = parse_threat_index_test_suite(&raw);
+    let tests = _parse_threat_index_test_suite(&raw);
 
     let mut passed = 0;
 
@@ -60,8 +60,8 @@ fn threat_index_test_suite() {
         };
 
         let stm = pos.turn();
-        let actual_stm = active_indices(&pos, stm);
-        let actual_ntm = active_indices(&pos, !stm);
+        let actual_stm = _active_indices(&pos, stm);
+        let actual_ntm = _active_indices(&pos, !stm);
 
         if actual_stm == test.expected_stm && actual_ntm == test.expected_ntm {
             passed += 1;
@@ -83,7 +83,7 @@ fn threat_index_test_suite() {
     println!("Passed {}/{} threat index tests", passed, tests.len());
 }
 
-fn parse_threat_index_test_suite(input: &str) -> Vec<ThreatIndexTest> {
+fn _parse_threat_index_test_suite(input: &str) -> Vec<ThreatIndexTest> {
     input
         .lines()
         .filter(|l| !l.trim().is_empty())
