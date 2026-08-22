@@ -132,7 +132,7 @@ impl UciHandler {
         println!("option name Threads type spin default 1 min 1 max 128");
         println!("option name Move Overhead type spin default 10 min 0 max 1000");
         println!("option name UCI_ShowWDL type check default true");
-        println!("option name NormalizeScore type check default true");
+        println!("option name NormalizeScore type check default false");
         print_spsa_options(&self.engine.params);
         println!("uciok");
     }
