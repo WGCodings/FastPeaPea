@@ -18,8 +18,6 @@ impl EpdBook {
     pub fn load(path: &str) -> Option<Self> {
         let content = fs::read_to_string(path).ok()?;
 
-        println!("{}", content);
-
         let fens: Vec<String> = content
             .lines()
             .filter_map(|l| {

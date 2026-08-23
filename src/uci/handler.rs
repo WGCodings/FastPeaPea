@@ -265,7 +265,6 @@ impl UciHandler {
             .and_then(|i| tokens.get(i + 1))
             .copied()
             .unwrap_or("None");
-        println!("book_arg {}", book_arg);
 
         let book = if book_arg == "None" {
             None
