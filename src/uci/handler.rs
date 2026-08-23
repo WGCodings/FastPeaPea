@@ -265,11 +265,12 @@ impl UciHandler {
             .and_then(|i| tokens.get(i + 1))
             .copied()
             .unwrap_or("None");
+        println!("book_arg {}", book_arg);
 
-        let book = if book_arg != "None" {
-            Some(EpdBook::load("assets/book.epd"))
-        } else {
+        let book = if book_arg == "None" {
             None
+        } else {
+            EpdBook::load(book_arg)
         };
 
         let fixed_plies: Option<u32> = tokens.iter()

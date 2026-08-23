@@ -15,9 +15,10 @@ pub struct EpdBook {
 }
 
 impl EpdBook {
-    pub fn load(path: &str) -> Self {
-        let content = fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("Cannot open EPD '{}': {}", path, e));
+    pub fn load(path: &str) -> Option<Self> {
+        let content = fs::read_to_string(path).ok()?;
+
+        println!("{}", content);
 
         let fens: Vec<String> = content
             .lines()
@@ -44,7 +45,7 @@ impl EpdBook {
             })
             .collect();
 
-        Self { fens }
+        Some(Self { fens })
     }
 
     /// Pick a random position from the book.
