@@ -1,7 +1,7 @@
 use std::cmp;
 use std::time::Duration;
 use shakmaty::{perft, Chess, Position};
-
+use crate::datagen::book::{generate_genfens_openings, EpdBook};
 use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::state::Engine;
@@ -9,9 +9,6 @@ use crate::engine::time_manager::compute_time_limit;
 use crate::engine::types::PIECE_VALUES;
 use crate::engine::utility::{read_position_from_fen};
 use crate::engine::search::threads::Threads;
-use crate::tuner::bounds::Bounds;
-use crate::tuner::main::run_spsa;
-use crate::tuner::perturb::perturb_params;
 use crate::datagen::datagen_main::run_datagen;
 use crate::uci::parser::{move_to_uci, uci_to_move, UciCommand};
 use crate::uci::state::UciState;
@@ -46,6 +43,12 @@ impl UciHandler {
             self.on_bench();
             return;
         }
+        if let Some(first) = std::env::args().nth(1).as_deref() {
+            if first.trim_start().starts_with("genfens") {
+                self.on_genfens(first);
+                return;
+            }
+        }
 
         use std::io::{self, BufRead};
         let stdin = io::stdin();
@@ -76,12 +79,9 @@ impl UciHandler {
             UciCommand::SetOption { name, value } => self.on_setoption(name, value),
             UciCommand::Perft { depth } => self.on_perft(depth),
             UciCommand::Bench => self.on_bench(),
+            UciCommand::GenFens { raw} => self.on_genfens(&raw),
             UciCommand::Quit        => return LoopControl::Break,
             // Non-standard tuner / datagen commands
-            UciCommand::LoadParams    { path }    => self.on_load_params(path),
-            UciCommand::SaveParams    { path }    => self.on_save_params(path),
-            UciCommand::PerturbParams { path, c } => self.on_perturb_params(path, c),
-            UciCommand::RunSPSA       => { run_spsa(); }
             UciCommand::DataGen       => { run_datagen(); }
             _                         => {}
         }
@@ -124,6 +124,8 @@ impl UciHandler {
         let nps = total_nodes * 1000 / (total_time as u64).max(1);
         println!("Bench: {total_nodes} nodes {nps} nps");
     }
+
+
 
     fn on_uci(&self) {
         println!("id name Pea 9.1");
@@ -245,25 +247,42 @@ impl UciHandler {
         println!("perftok");
     }
 
-    // -----------------------------------------------------------------------
-    // Tuner / datagen commands
-    // -----------------------------------------------------------------------
+    fn on_genfens(&self, raw: &str) {
+        let tokens: Vec<&str> = raw.split_whitespace().collect();
 
-    fn on_load_params(&mut self, path: String) {
-        self.engine.params = Params::load_yaml(&path);
+        let n: usize = tokens.get(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+
+        let seed: u64 = tokens.iter()
+            .position(|&t| t == "seed")
+            .and_then(|i| tokens.get(i + 1))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        let book_arg: &str = tokens.iter()
+            .position(|&t| t == "book")
+            .and_then(|i| tokens.get(i + 1))
+            .copied()
+            .unwrap_or("None");
+
+        let book = if book_arg != "None" {
+            Some(EpdBook::load("assets/book.epd"))
+        } else {
+            None
+        };
+
+        let fixed_plies: Option<u32> = tokens.iter()
+            .position(|&t| t == "plies")
+            .and_then(|i| tokens.get(i + 1))
+            .and_then(|s| s.parse().ok());
+
+        let fens = generate_genfens_openings(n, seed, book.as_ref(), fixed_plies);
+        for fen in fens {
+            println!("info string genfens {fen}");
+        }
     }
 
-    fn on_save_params(&self, path: String) {
-        self.engine.params.save_yaml(&path);
-    }
-
-    fn on_perturb_params(&self, path: String, c: f64) {
-        let base   = Params::load_yaml(&path);
-        let bounds = Bounds::load_yaml("src/tuner/config/bounds.yaml");
-        let (theta_plus, theta_minus, _) = perturb_params(&base, &bounds, c);
-        theta_plus .save_yaml("src/tuner/config/theta_plus.yaml");
-        theta_minus.save_yaml("src/tuner/config/theta_minus.yaml");
-    }
     fn set_param(&mut self, name: &str, value: &str) {
         let params = &mut self.engine.params;
 

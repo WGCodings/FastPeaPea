@@ -29,14 +29,7 @@ pub enum UciCommand {
         depth: u32,
     },
     Bench,
-    // Used to load  and save params for teh SPSA
-    LoadParams { path: String },
-    SaveParams { path: String },
-    PerturbParams {
-        path: String,
-        c: f64,
-    },
-    RunSPSA,
+    GenFens { raw: String },
     DataGen,
     Unknown,
 }
@@ -56,6 +49,7 @@ pub fn parse_command(input: &str) -> UciCommand {
         "stop" => UciCommand::Stop,
         "quit" => UciCommand::Quit,
         "bench" => UciCommand::Bench,
+        "genfens" => UciCommand::GenFens { raw: input.trim().to_string() },
         "position" => {
             let mut fen = None;
             let mut moves = Vec::new();
@@ -165,38 +159,6 @@ pub fn parse_command(input: &str) -> UciCommand {
 
             UciCommand::Perft { depth: 1 }
         },
-        "loadparams" => {
-            if tokens.len() >= 2 {
-                UciCommand::LoadParams {
-                    path: tokens[1].to_string()
-                }
-            }
-            else{
-                UciCommand::Unknown
-            }
-
-        },
-        "saveparams" => {
-            if tokens.len() >= 2 {
-                UciCommand::SaveParams {
-                    path: tokens[1].to_string()
-                }
-            }
-            else {
-                UciCommand::Unknown
-            }
-        },
-        "perturbparams" => {
-            if tokens.len() >= 3 {
-                UciCommand::PerturbParams {
-                    path: tokens[1].to_string(),
-                    c: tokens[2].parse::<f64>().unwrap_or(0.1),
-                }
-            } else {
-                UciCommand::Unknown
-            }
-        },
-        "runspsa" => UciCommand::RunSPSA,
         "datagen" => UciCommand::DataGen,
 
         _ => UciCommand::Unknown,

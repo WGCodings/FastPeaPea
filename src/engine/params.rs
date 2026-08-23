@@ -1,7 +1,5 @@
-use std::fs;
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
-use std::collections::BTreeMap;
+
 
 // =====================================================================================================================//
 // ALL OUR SEARCH PARAMETERS, CAN BE LOADED AND SAVE TO FROM YAML                                                       //
@@ -76,18 +74,6 @@ pub struct Params {
 }
 
 impl Params {
-
-    pub fn load_yaml(path: &str) -> Self {
-        match fs::read_to_string(path) {
-            Ok(file) =>
-            { serde_yaml::from_str::<Params>(&file.as_str()).unwrap_or_else(|_| {Params::default() }) }
-            Err(_) => { Params::default() } } }
-    pub fn save_yaml(&self, path: &str) {
-        let yaml = serde_yaml::to_string(self).expect("Failed to serialize params");
-        fs::write(path, yaml).expect("Failed to write params_patch.yaml");
-    }
-
-
     pub fn default() -> Self {
         Self {
             // RAZORING
@@ -159,24 +145,4 @@ impl Params {
 
         }
     }
-}
-pub(crate) fn params_to_map(params: &Params) -> BTreeMap<String, Value> {
-    let value = serde_yaml::to_value(params).unwrap();
-
-    match value {
-        Value::Mapping(map) => map
-            .into_iter()
-            .map(|(k, v)| (k.as_str().unwrap().to_string(), v))
-            .collect(),
-        _ => panic!("Params must serialize to map"),
-    }
-}
-
-pub(crate) fn map_to_params(map: BTreeMap<String, Value>) -> Params {
-    let mapping = map
-        .into_iter()
-        .map(|(k, v)| (Value::String(k), v))
-        .collect();
-
-    serde_yaml::from_value(Value::Mapping(mapping)).unwrap()
 }

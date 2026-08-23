@@ -4,4 +4,4 @@ pub mod datagen_config;
 pub mod datagen_format;
 pub mod game;
 pub mod adjudication;
-mod book;
+pub mod book;
