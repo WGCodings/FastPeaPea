@@ -57,7 +57,7 @@ impl Engine {
         Self {
             position,
             repetition_stack,
-            tt:                  TranspositionTable::new(16),
+            tt:                  TranspositionTable::new(256),
             corrhist_pawn:       CorrectionHistoryTable::new(256,32),
             corrhist_material:   CorrectionHistoryTable::new(256,32),
             corrhist_minor:      CorrectionHistoryTable::new(256,0),

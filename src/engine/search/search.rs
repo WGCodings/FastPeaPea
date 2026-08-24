@@ -85,7 +85,7 @@ pub fn search(pos: &Chess, ctx: &mut SearchContext, uci : &UciState, max_depth: 
         latest_pv = pv; // why use pv table if we get pv from tt? verification?
         ctx.stats.completed_depth = depth;
 
-        if ctx.is_main{
+        if ctx.is_main {
             tt_pv = print_search_info(ctx, uci, pos, depth, best_score, tm.elapsed(), latest_pv);
         }
 

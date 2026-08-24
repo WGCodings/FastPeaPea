@@ -27,7 +27,7 @@ pub struct UciHandler {
 impl UciHandler {
     pub fn new() -> Self {
         Self {
-            uci:    UciState::new(),
+            uci:    UciState::new(true),
             engine: Engine::new(),
         }
     }
@@ -128,14 +128,14 @@ impl UciHandler {
 
 
     fn on_uci(&self) {
-        println!("id name Pea 9.1");
+        println!("id name Pea 10.0");
         println!("id author Warre G.");
-        println!("option name Hash type spin default 16 min 1 max 1024");
+        println!("option name Hash type spin default 256 min 1 max 1024");
         println!("option name Threads type spin default 1 min 1 max 128");
         println!("option name Move Overhead type spin default 10 min 0 max 1000");
         println!("option name UCI_ShowWDL type check default true");
         println!("option name NormalizeScore type check default false");
-        print_spsa_options(&self.engine.params);
+        //print_spsa_options(&self.engine.params);
         println!("uciok");
     }
 
@@ -195,7 +195,7 @@ impl UciHandler {
 
         let (_, best_move, _,_) = Threads::search(
             &position, &mut self.engine, &ordering,
-            max_depth, max_nodes, time_limit, &self.uci,true
+            max_depth, max_nodes, time_limit, &self.uci,self.uci.verbose
         );
 
         println!("bestmove {}", move_to_uci(&best_move));
