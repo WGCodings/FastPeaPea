@@ -28,7 +28,7 @@ impl UciHandler {
     pub fn new() -> Self {
         Self {
             uci:    UciState::new(true),
-            engine: Engine::new(16),
+            engine: Engine::new(256),
         }
     }
 
