@@ -45,7 +45,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new() -> Self {
+    pub fn new(ttsize : usize) -> Self {
         let params   = Params::default();
         let position = Chess::new();
         let net      = Self::load_network();
@@ -57,7 +57,7 @@ impl Engine {
         Self {
             position,
             repetition_stack,
-            tt:                  TranspositionTable::new(256),
+            tt:                  TranspositionTable::new(ttsize),
             corrhist_pawn:       CorrectionHistoryTable::new(256,32),
             corrhist_material:   CorrectionHistoryTable::new(256,32),
             corrhist_minor:      CorrectionHistoryTable::new(256,0),
