@@ -105,7 +105,7 @@ pub fn run_game(
         let (score, best_move, _pv,_) = search(
             &pos,
             &mut ctx,
-            &UciState::new(),
+            &UciState::new(false),
             128,
             Some(Duration::from_secs(3600)),
             config.nodes_per_move,

@@ -101,7 +101,7 @@ fn run_worker(
 
     let mut game_id: u64 = 0;
 
-    let book = config.epd_path.as_ref().map(|path| EpdBook::load(path));
+    let book = config.epd_path.as_ref().map(|path| EpdBook::load(path)).expect("Failed to load epd");
 
     loop {
         if (*total_positions).load(Ordering::Relaxed) >= config.target_positions {

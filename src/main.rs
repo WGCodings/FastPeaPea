@@ -3,7 +3,6 @@ mod uci;
 mod nnue;
 mod datagen;
 mod tests;
-mod tuner;
 
 use crate::uci::handler::UciHandler;
 

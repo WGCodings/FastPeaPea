@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 pub struct UciState {
     pub multipv: usize,
+    pub verbose: bool,
 
     pub uci_show_wdl : bool,
     pub normalize_score : bool,
@@ -16,11 +17,12 @@ pub struct UciState {
 }
 
 impl UciState {
-    pub fn new() -> Self {
+    pub fn new(verbose: bool) -> Self {
         Self {
             multipv: 1,
+            verbose,
             uci_show_wdl: true,
-            normalize_score: true,
+            normalize_score: false,
             stop: Arc::new(AtomicBool::new(false)),
             last_wtime: None,
             last_btime: None,
