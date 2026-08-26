@@ -27,7 +27,7 @@ pub struct UciHandler {
 impl UciHandler {
     pub fn new() -> Self {
         Self {
-            uci:    UciState::new(false),
+            uci:    UciState::new(true),
             engine: Engine::new(16),
         }
     }
