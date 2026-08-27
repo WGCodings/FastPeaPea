@@ -354,7 +354,7 @@ impl UciHandler {
 #[derive(PartialEq)]
 enum LoopControl { Continue, Break }
 
-fn print_spsa_options(params: &Params) {
+fn _print_spsa_options(params: &Params) {
     //int
     println!("option name raz_max_depth type spin default {} min 0 max 15", params.raz_max_depth );
     println!("option name raz_thr type spin default {} min 0 max 512", params.raz_thr);

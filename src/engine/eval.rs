@@ -2,7 +2,7 @@ use std::cmp::max;
 use shakmaty::{Bitboard, Chess, Color, Position, Role, Square};
 use crate::engine::search::context::{clean_accumulator, NNUEState};
 use crate::engine::types::{KBN_TABLE_DARK, KBN_TABLE_LIGHT, MATE_SCORE};
-use crate::nnue::network::{accumulator_for_perspective, add_threat_features, Network};
+use crate::nnue::network::{add_threat_features, Network};
 
 // =====================================================================================================================//
 // EVALUATE NNUE + MOPUP                                                                                                //
