@@ -239,25 +239,6 @@ impl Network {
         &NNUE
     }
 
-    pub fn _load_from_path(path: &str) -> Box<Network> {
-        let bytes = std::fs::read(path)
-            .unwrap_or_else(|e| panic!("Failed to read network '{}': {}", path, e));
-        assert_eq!(
-            bytes.len(),
-            std::mem::size_of::<Network>(),
-            "Network file '{}' has wrong size", path
-        );
-        unsafe {
-            let mut net = Box::new(std::mem::zeroed::<Network>());
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                net.as_mut() as *mut Network as *mut u8,
-                std::mem::size_of::<Network>(),
-            );
-            net
-        }
-    }
-
     fn bucket(&self, pos: &Chess) -> usize {
         let divisor = 32usize.div_ceil(NUM_OUTPUT_BUCKETS);
         (pos.board().occupied().count() - 2) / divisor
