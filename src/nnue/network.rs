@@ -17,6 +17,7 @@ const KING_BUCKET_LAYOUT: [usize; 64] =  [
 ];
 pub const NUM_INPUT_BUCKETS: usize = 4;
 
+#[cfg(target_feature = "avx2")]
 use std::arch::x86_64::*;
 
 use shakmaty::{Board, Chess, Color, Position, Role};
