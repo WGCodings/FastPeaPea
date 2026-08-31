@@ -11,11 +11,11 @@ mod tests{
 
     struct ThreatIndexTest {
         fen: String,
-        expected_stm: Vec<usize>,
-        expected_ntm: Vec<usize>,
+        expected_stm: Vec<u16>,
+        expected_ntm: Vec<u16>,
     }
 
-    fn active_indices(pos: &Chess, perspective: Color) -> Vec<usize> {
+    fn active_indices(pos: &Chess, perspective: Color) -> Vec<u16> {
         let board = pos.board();
         let (bucket, is_mirrored) = get_bucket(board, perspective);
         let mut out = Vec::new();
@@ -95,12 +95,12 @@ fn _parse_threat_index_test_suite(input: &str) -> Vec<ThreatIndexTest> {
 
             let fen = parts[0].trim().to_string();
 
-            let parse_list = |field: &str, prefix: &str| -> Vec<usize> {
+            let parse_list = |field: &str, prefix: &str| -> Vec<u16> {
                 let stripped = field.trim().strip_prefix(prefix).unwrap_or_else(|| panic!("expected {prefix} prefix in: {field}"));
                 if stripped.is_empty() {
                     Vec::new()
                 } else {
-                    let mut v: Vec<usize> = stripped.split(',').map(|x| x.trim().parse().unwrap()).collect();
+                    let mut v: Vec<u16> = stripped.split(',').map(|x| x.trim().parse().unwrap()).collect();
                     v.sort_unstable();
                     v
                 }

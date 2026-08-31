@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::{Duration, Instant};
-use shakmaty::{Bitboard, Board, Chess, Color, Move, Position, Role, Square};
+use shakmaty::{attacks, Bitboard, Board, Chess, Color, Move, Position, Role, Square};
 use crate::engine::corrhist::{CorrectionHistoryTable, MajorsAndKingsKey, MaterialKey, MinorsAndKingsKey, PawnKey};
 use crate::engine::finny::{FinnyEntry, FinnyTable};
 use crate::engine::history::HistoryTables;
@@ -9,7 +9,7 @@ use crate::engine::params::Params;
 use crate::engine::search::ordering::MoveOrdering;
 use crate::engine::search::search::SearchStats;
 use crate::engine::tt::TranspositionTable;
-use crate::nnue::network::{accumulator_for_perspective, calculate_index, get_bucket, role_index, Accumulator, Network};
+use crate::nnue::network::{accumulator_for_perspective, attacks_from_for, calculate_index, calculate_threat_index, get_bucket, init_threats, role_index, Accumulator, Network};
 
 // Keep track of move, eval and nr of double ext per ply.
 pub struct Stack {
@@ -146,14 +146,27 @@ impl<'a> SearchContext<'a> {
 // =====================================================================================================================//
 // KEEP TRACK OF CHANGES TO ACCUMULATOR DURING MAKE MOVE                                                                //
 // =====================================================================================================================//
+
+const THREAT_CHANGE_SIZE: usize = 32;
 #[derive(Clone, Copy)]
 pub struct AccumulatorDelta {
-    white_removed: [usize; 2],
-    white_added: [usize; 2],
-    black_removed: [usize; 2],
-    black_added: [usize; 2],
+    white_removed: [u16; 2],
+    white_added: [u16; 2],
+    black_removed: [u16; 2],
+    black_added: [u16; 2],
     n_removed: u8,
     n_added: u8,
+
+    threat_white_removed: [u16;THREAT_CHANGE_SIZE],
+    threat_white_added: [u16;THREAT_CHANGE_SIZE],
+    threat_black_removed: [u16;THREAT_CHANGE_SIZE],
+    threat_black_added: [u16;THREAT_CHANGE_SIZE],
+    n_threat_removed: u8,
+    n_threat_added: u8,
+
+    threat_squares_affected: [u16; THREAT_CHANGE_SIZE],
+    n_threat_squares_affected: u8,
+
     is_refresh: bool,
     refresh_color: Color
 }
@@ -164,6 +177,11 @@ impl AccumulatorDelta {
             white_removed: [0; 2], white_added: [0; 2],
             black_removed: [0; 2], black_added: [0; 2],
             n_removed: 0, n_added: 0,
+            threat_white_removed: [0; THREAT_CHANGE_SIZE], threat_white_added: [0; THREAT_CHANGE_SIZE],
+            threat_black_removed: [0; THREAT_CHANGE_SIZE], threat_black_added: [0; THREAT_CHANGE_SIZE],
+            n_threat_removed: 0, n_threat_added: 0,
+            threat_squares_affected: [0; THREAT_CHANGE_SIZE],
+            n_threat_squares_affected: 0,
             is_refresh: false,
             refresh_color: Color::White,
         }
@@ -183,21 +201,30 @@ pub struct NNUEState {
     pub black_is_mirrored : bool,
     pub stack: Vec<AccumulatorDelta>,
     pub applied: usize,
-    pub ft: FinnyTable
+    pub ft: FinnyTable,
+    pub threats: [Bitboard; 64]
 }
 
 impl NNUEState {
     pub fn new<P: Position>(pos: &P, net: &Network) -> Self {
-        let (white_acc, white_bucket, white_is_mirrored) = accumulator_for_perspective(pos, net, Color::White);
-        let (black_acc, black_bucket, black_is_mirrored) = accumulator_for_perspective(pos, net, Color::Black);
+        let (mut white_acc, white_bucket, white_is_mirrored) = accumulator_for_perspective(pos, net, Color::White);
+        let (mut black_acc, black_bucket, black_is_mirrored) = accumulator_for_perspective(pos, net, Color::Black);
+
+        let threats = init_threats(pos.board());
+        for sq in 0..64 {
+            for target in threats[sq] {
+                white_acc.add_feature(calculate_threat_index(sq, target.to_usize(), Color::White, white_is_mirrored), net);
+                black_acc.add_feature(calculate_threat_index(sq, target.to_usize(), Color::Black, black_is_mirrored), net);
+            }
+        }
 
         let mut ft = FinnyTable::default(net);
         let bb = get_bb(pos.board());
-        *ft.get_entry(Color::White, white_bucket, white_is_mirrored) = FinnyEntry { acc: white_acc, piece_bb: bb };
-        *ft.get_entry(Color::Black, black_bucket, black_is_mirrored) = FinnyEntry { acc: black_acc, piece_bb: bb };
+        *ft.get_entry(Color::White, white_bucket, white_is_mirrored) = FinnyEntry { acc: white_acc, piece_bb: bb ,threats};
+        *ft.get_entry(Color::Black, black_bucket, black_is_mirrored) = FinnyEntry { acc: black_acc, piece_bb: bb ,threats };
 
 
-        Self { white_acc, black_acc, white_bucket, black_bucket, white_is_mirrored, black_is_mirrored, stack: Vec::with_capacity(64), applied: 0, ft }
+        Self { white_acc, black_acc, white_bucket, black_bucket, white_is_mirrored, black_is_mirrored, stack: Vec::with_capacity(64), applied: 0, ft, threats }
     }
 }
 
@@ -226,12 +253,14 @@ pub fn clean_accumulator<P: Position>(pos: &P, net: &Network, state: &mut NNUESt
                     do_white_finny_refresh = true;
                     if !do_black_finny_refresh {
                         state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net);
+                        state.black_acc.apply_feature_updates(&delta.threat_black_added[..delta.n_threat_added as usize], &delta.threat_black_removed[..delta.n_threat_removed as usize], net);
                     }
                 }
                 Color::Black => {
                     do_black_finny_refresh = true;
                     if !do_white_finny_refresh {
                         state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net);
+                        state.white_acc.apply_feature_updates(&delta.threat_white_added[..delta.n_threat_added as usize], &delta.threat_white_removed[..delta.n_threat_removed as usize], net);
                     }
                 }
             }
@@ -240,34 +269,38 @@ pub fn clean_accumulator<P: Position>(pos: &P, net: &Network, state: &mut NNUESt
 
         if !do_white_finny_refresh {
             state.white_acc.apply_feature_updates(&delta.white_added[..delta.n_added as usize], &delta.white_removed[..delta.n_removed as usize], net);
+            state.white_acc.apply_feature_updates(&delta.threat_white_added[..delta.n_threat_added as usize], &delta.threat_white_removed[..delta.n_threat_removed as usize], net);
         }
         if !do_black_finny_refresh {
             state.black_acc.apply_feature_updates(&delta.black_added[..delta.n_added as usize], &delta.black_removed[..delta.n_removed as usize], net);
+            state.black_acc.apply_feature_updates(&delta.threat_black_added[..delta.n_threat_added as usize], &delta.threat_black_removed[..delta.n_threat_removed as usize], net);
         }
     }
 
     if do_white_finny_refresh {
-        state.white_acc = finny_refresh(pos, net, Color::White, state.white_bucket, state.white_is_mirrored, &mut state.ft);
+        state.white_acc = finny_refresh(pos, net, Color::White, state.white_bucket, state.white_is_mirrored, &state.threats, &mut state.ft);
+
     }
     if do_black_finny_refresh {
-        state.black_acc = finny_refresh(pos, net, Color::Black, state.black_bucket, state.black_is_mirrored, &mut state.ft);
+        state.black_acc = finny_refresh(pos, net, Color::Black, state.black_bucket, state.black_is_mirrored, &state.threats, &mut state.ft);
     }
 
     state.applied = state.stack.len();
 }
 
-fn finny_refresh<P: Position>(pos: &P, net: &Network, perspective: Color, bucket: usize, is_mirrored : bool, ft: &mut FinnyTable) -> Accumulator {
+fn finny_refresh<P: Position>(pos: &P, net: &Network, perspective: Color, bucket: usize, is_mirrored : bool, current_threats: &[Bitboard; 64], ft: &mut FinnyTable) -> Accumulator {
     let board = pos.board();
     let new_bb = get_bb(board);
     let entry = ft.get_entry(perspective, bucket, is_mirrored);
 
     let mut acc = entry.acc;
 
-    let mut adds = [0usize; 32];
-    let mut rems = [0usize; 32];
+    let mut adds = [0u16; THREAT_CHANGE_SIZE];
+    let mut rems = [0u16; THREAT_CHANGE_SIZE];
     let mut n_add = 0;
     let mut n_rem = 0;
 
+    // Diff the base768
     for side in 0..2 {
         for role_idx in 0..6 {
             let old = entry.piece_bb[side][role_idx];
@@ -283,11 +316,27 @@ fn finny_refresh<P: Position>(pos: &P, net: &Network, perspective: Color, bucket
             }
         }
     }
-
     acc.apply_feature_updates(&adds[..n_add], &rems[..n_rem], net);
+
+
+    // Diff the threats
+    let mut tadds = [0u16; THREAT_CHANGE_SIZE];
+    let mut trems = [0u16; THREAT_CHANGE_SIZE];
+    let mut tn_add = 0;
+    let mut tn_rem = 0;
+    for sq in 0..64 {
+        let old = entry.threats[sq];
+        let new = current_threats[sq];
+        if old == new { continue; }
+        for target in old & !new { trems[tn_rem] = calculate_threat_index(sq, target.to_usize(), perspective, is_mirrored); tn_rem += 1; }
+        for target in new & !old { tadds[tn_add] = calculate_threat_index(sq, target.to_usize(), perspective, is_mirrored); tn_add += 1; }
+    }
+
+    acc.apply_feature_updates(&tadds[..tn_add], &trems[..tn_rem], net);
 
     entry.acc = acc;
     entry.piece_bb = new_bb;
+    entry.threats = *current_threats;
     acc
 }
 
@@ -310,6 +359,9 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, state: &mu
     let black_bucket = state.black_bucket;
     let black_is_mirrored = state.black_is_mirrored;
 
+    let mut touched = [0usize; 4];
+    let n_touched: usize;
+
     match *mv {
         Move::Normal { from, to, promotion, .. } => {
             let piece = board.piece_at(from).unwrap();
@@ -326,6 +378,11 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, state: &mu
 
             let final_type = role_index(promotion.unwrap_or(piece.role));
             add_feature(&mut delta, side, to.to_usize(), final_type, white_bucket, white_is_mirrored,black_is_mirrored, black_bucket);
+
+            // Keep track of touches squares to update threats
+            touched[0] = from.to_usize();
+            touched[1] = to.to_usize();
+            n_touched = 2;
         }
 
         Move::EnPassant { from, to } => {
@@ -339,6 +396,13 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, state: &mu
             remove_feature(&mut delta, 1 - side, cap_sq, piece_type, white_bucket, white_is_mirrored,black_is_mirrored, black_bucket);
 
             add_feature(&mut delta, side, to.to_usize(), piece_type, white_bucket, white_is_mirrored,black_is_mirrored, black_bucket);
+
+            // Keep track of touches squares to update threats
+            touched[0] = from.to_usize();
+            touched[1] = to.to_usize();
+            touched[2] = cap_sq;
+            n_touched = 3;
+
         }
 
         Move::Castle { king, rook } => {
@@ -355,8 +419,14 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, state: &mu
             remove_feature(&mut delta, side, rook_from, role_index(Role::Rook), white_bucket, white_is_mirrored,black_is_mirrored, black_bucket);
             add_feature(&mut delta, side, king_to, role_index(Role::King), white_bucket, white_is_mirrored,black_is_mirrored, black_bucket);
             add_feature(&mut delta, side, rook_to, role_index(Role::Rook), white_bucket, white_is_mirrored,black_is_mirrored, black_bucket);
+
+            touched[0] = king_from;
+            touched[1] = king_to;
+            touched[2] = rook_from;
+            touched[3] = rook_to;
+            n_touched = 4;
         }
-        _ => {}
+        _ => {n_touched = 0;}
     }
 
     if is_king_move::<P>(mv) {
@@ -378,6 +448,7 @@ pub fn make_move_nnue<P: Position>(pos: &P, child_pos: &P, mv: &Move, state: &mu
         }
     }
 
+    update_threats(&mut delta, state, child_pos, &touched[..n_touched]);
     state.stack.push(delta);
 }
 
@@ -386,11 +457,16 @@ pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUESta
     let is_clean = state.applied == state.stack.len();
     let delta = state.stack.pop().unwrap();
 
+    for i in 0..delta.n_threat_squares_affected as usize {
+        let sq = delta.threat_squares_affected[i];
+        state.threats[sq as usize] = attacks_from_for(pos.board(), Square::new(sq as u32));
+    }
+
     if delta.is_refresh {
         let (old_bucket, old_is_mirrored) = get_bucket(pos.board(), delta.refresh_color);
         match delta.refresh_color {
-            Color::White => { state.white_bucket = old_bucket; state.white_is_mirrored = old_is_mirrored; }
-            Color::Black => { state.black_bucket = old_bucket; state.black_is_mirrored = old_is_mirrored; }
+            Color::White => { state.white_bucket = old_bucket;state.white_is_mirrored = old_is_mirrored;}
+            Color::Black => { state.black_bucket = old_bucket;state.black_is_mirrored = old_is_mirrored; }
         }
     }
 
@@ -403,21 +479,32 @@ pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUESta
         let stm = delta.refresh_color;
 
         match stm {
-            Color::White => state.black_acc.apply_feature_updates(&delta.black_removed[..delta.n_removed as usize], &delta.black_added[..delta.n_added as usize], net),
-            Color::Black => state.white_acc.apply_feature_updates(&delta.white_removed[..delta.n_removed as usize], &delta.white_added[..delta.n_added as usize], net)
+            Color::White => {
+                state.black_acc.apply_feature_updates(&delta.black_removed[..delta.n_removed as usize], &delta.black_added[..delta.n_added as usize], net);
+                state.black_acc.apply_feature_updates(&delta.threat_black_removed[..delta.n_threat_removed as usize], &delta.threat_black_added[..delta.n_threat_added as usize], net);
+            }
+            Color::Black => {
+                state.white_acc.apply_feature_updates(&delta.white_removed[..delta.n_removed as usize], &delta.white_added[..delta.n_added as usize], net);
+                state.white_acc.apply_feature_updates(&delta.threat_white_removed[..delta.n_threat_removed as usize], &delta.threat_white_added[..delta.n_threat_added as usize], net);
+            }
         }
 
-        let bucket = match stm { Color::White => state.white_bucket, Color::Black => state.black_bucket };
+        let bucket = match stm {
+            Color::White => state.white_bucket,
+            Color::Black => state.black_bucket
+        };
 
         match stm {
-            Color::White => state.white_acc = finny_refresh(pos, net, Color::White, bucket, state.white_is_mirrored, &mut state.ft),
-            Color::Black => state.black_acc = finny_refresh(pos, net, Color::Black, bucket, state.black_is_mirrored, &mut state.ft),
+            Color::White => state.white_acc = finny_refresh(pos, net, Color::White, bucket, state.white_is_mirrored, &state.threats, &mut state.ft),
+            Color::Black => state.black_acc = finny_refresh(pos, net, Color::Black, bucket, state.black_is_mirrored, &state.threats, &mut state.ft),
         }
         return;
     }
 
     state.white_acc.apply_feature_updates(&delta.white_removed[..delta.n_removed as usize], &delta.white_added[..delta.n_added as usize], net);
     state.black_acc.apply_feature_updates(&delta.black_removed[..delta.n_removed as usize], &delta.black_added[..delta.n_added as usize], net);
+    state.white_acc.apply_feature_updates(&delta.threat_white_removed[..delta.n_threat_removed as usize], &delta.threat_white_added[..delta.n_threat_added as usize], net);
+    state.black_acc.apply_feature_updates(&delta.threat_black_removed[..delta.n_threat_removed as usize], &delta.threat_black_added[..delta.n_threat_added as usize], net);
 }
 
 
@@ -425,7 +512,7 @@ pub fn unmake_move_nnue<P: Position>(pos: &P, net: &Network, state: &mut NNUESta
 // =====================================================================================================================//
 // HELPER FUNCTION TO ACTIVATE AND DEACTIVATE FEATURES INTO FUSED UPDATES                                               //
 // =====================================================================================================================//
-
+#[inline(always)]
 fn remove_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_bucket: usize, white_is_mirrored : bool, black_is_mirrored : bool, black_bucket: usize) {
     let white_idx = calculate_index(side, sq, piece_type, Color::White, white_bucket,white_is_mirrored);
     let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_bucket,black_is_mirrored);
@@ -434,7 +521,7 @@ fn remove_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_ty
     delta.black_removed[n] = black_idx;
     delta.n_removed += 1;
 }
-
+#[inline(always)]
 fn add_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type: usize, white_bucket: usize, white_is_mirrored : bool, black_is_mirrored : bool, black_bucket: usize) {
     let white_idx = calculate_index(side, sq, piece_type, Color::White, white_bucket,white_is_mirrored);
     let black_idx = calculate_index(side, sq, piece_type, Color::Black, black_bucket,black_is_mirrored);
@@ -443,7 +530,81 @@ fn add_feature(delta: &mut AccumulatorDelta, side: usize, sq: usize, piece_type:
     delta.black_added[n] = black_idx;
     delta.n_added += 1;
 }
+#[inline(always)]
+fn add_threat_feature(delta: &mut AccumulatorDelta, attacker: usize, target: usize, white_mirror: bool, black_mirror: bool) {
+    let n = delta.n_threat_added as usize;
+    delta.threat_white_added[n] = calculate_threat_index(attacker, target, Color::White, white_mirror);
+    delta.threat_black_added[n] = calculate_threat_index(attacker, target, Color::Black, black_mirror);
+    delta.n_threat_added += 1;
+}
+#[inline(always)]
+fn remove_threat_feature(delta: &mut AccumulatorDelta, attacker: usize, target: usize, white_mirror: bool, black_mirror: bool) {
+    let n = delta.n_threat_removed as usize;
+    delta.threat_white_removed[n] = calculate_threat_index(attacker, target, Color::White, white_mirror);
+    delta.threat_black_removed[n] = calculate_threat_index(attacker, target, Color::Black, black_mirror);
+    delta.n_threat_removed += 1;
+}
+#[inline(always)]
+fn add_affected_square(sq: usize, affected: &mut [usize; 64], n: &mut usize) {
+    if !affected[..*n].contains(&sq) {
+        affected[*n] = sq;
+        *n += 1;
+    }
+}
+#[inline(always)]
+fn attacks_to_sq(board: &Board, sq: Square, occupied: Bitboard) -> Bitboard {
+    (attacks::rook_attacks(sq, occupied) & board.rooks_and_queens())
+        | (attacks::bishop_attacks(sq, occupied) & board.bishops_and_queens())
+        | (attacks::knight_attacks(sq) & board.by_role(Role::Knight))
+        | (attacks::king_attacks(sq) & board.by_role(Role::King))
+        | (attacks::pawn_attacks(Color::White, sq) & board.by_role(Role::Pawn) & board.by_color(Color::Black))
+        | (attacks::pawn_attacks(Color::Black, sq) & board.by_role(Role::Pawn) & board.by_color(Color::White))
+}
+#[inline(always)]
+fn update_threats<P: Position>(delta: &mut AccumulatorDelta, state: &mut NNUEState, child_pos: &P, touched: &[usize]) {
+    let board = child_pos.board();
+    let new_occ = board.occupied();
 
+    let mut affected = [0usize; 64];
+    let mut n_affected = 0;
+
+    for &sq in touched {
+        add_affected_square(sq, &mut affected, &mut n_affected);
+        let target_sq = Square::new(sq as u32);
+        let attackers = attacks_to_sq(board,target_sq, new_occ);
+
+        for att_sq in attackers {
+            add_affected_square(att_sq.to_usize(), &mut affected, &mut n_affected);
+        }
+    }
+
+    let white_mirror = state.white_is_mirrored;
+    let black_mirror = state.black_is_mirrored;
+
+    for i in 0..n_affected {
+        let sq = affected[i];
+        let old_attacks = state.threats[sq];
+        let new_attacks = attacks_from_for(board, Square::new(sq as u32));
+
+        if old_attacks == new_attacks {
+            continue;
+        }
+
+        for target in old_attacks & !new_attacks {
+            remove_threat_feature(delta, sq, target.to_usize(), white_mirror, black_mirror);
+        }
+        for target in new_attacks & !old_attacks {
+            add_threat_feature(delta, sq, target.to_usize(), white_mirror, black_mirror);
+        }
+
+        state.threats[sq] = new_attacks;
+
+        let n = delta.n_threat_squares_affected as usize;
+        delta.threat_squares_affected[n] = sq as u16;
+        delta.n_threat_squares_affected += 1;
+    }
+}
+#[inline(always)]
 fn get_bb(board: &Board) -> [[Bitboard; 6]; 2] {
     let mut bb = [[Bitboard::EMPTY; 6]; 2];
     let white = board.white();

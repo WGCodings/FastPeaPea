@@ -6,12 +6,13 @@ use crate::nnue::network::{Accumulator, Network, NUM_INPUT_BUCKETS};
 #[derive(Clone, Copy)]
 pub struct FinnyEntry {
     pub acc: Accumulator,
-    pub piece_bb: [[Bitboard; 6]; 2]
+    pub piece_bb: [[Bitboard; 6]; 2],
+    pub threats : [Bitboard; 64]
 }
 
 impl FinnyEntry {
     fn default(net: &Network) -> Self {
-        Self { acc: Accumulator::new(net), piece_bb: [[Bitboard::EMPTY; 6]; 2] }
+        Self { acc: Accumulator::new(net), piece_bb: [[Bitboard::EMPTY; 6]; 2], threats: [Bitboard::EMPTY; 64] }
     }
 }
 

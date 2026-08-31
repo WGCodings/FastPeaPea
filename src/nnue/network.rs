@@ -20,7 +20,7 @@ pub const NUM_INPUT_BUCKETS: usize = 4;
 
 use std::arch::x86_64::*;
 
-use shakmaty::{Board, Chess, Color, Position, Role};
+use shakmaty::{Bitboard, Board, Chess, Color, Position, Role, Square};
 
 static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../../nnue/files/quantised.bin")) };
 
@@ -43,7 +43,7 @@ pub fn get_bucket(board: &Board, perspective: Color) -> (usize,bool) {
 }
 
 #[inline(always)]
-pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize, is_mirrored : bool) -> usize {
+pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize, is_mirrored : bool) -> u16 {
     if perspective == Color::Black {
         side = 1 - side;
         sq_idx ^= 56;
@@ -53,20 +53,7 @@ pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, pe
         sq_idx ^= 7;
     }
 
-    bucket * 768 + side * 384 + piece_type * 64 + sq_idx
-}
-
-#[inline(always)]
-pub fn calculate_threat_index(mut attacker: usize, mut target: usize, perspective: Color, is_mirrored: bool) -> usize {
-    if perspective == Color::Black {
-        attacker ^= 56;
-        target ^= 56;
-    }
-    if is_mirrored {
-        attacker ^= 7;
-        target ^= 7;
-    }
-    THREAT_OFFSET + attacker * 64 + target
+    (bucket * 768 + side * 384 + piece_type * 64 + sq_idx) as u16
 }
 
 #[inline(always)]
@@ -85,22 +72,36 @@ pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspect
     }
     (acc, bucket, is_mirrored)
 }
-/// Adds trheat features to existing accumulator, later it should be done incrementally
-pub fn add_threat_features<P: Position>(pos: &P, net: &Network, perspective: Color, is_mirrored: bool, acc: &mut Accumulator) {
-    let board = pos.board();
+////////////////////////////////////////////////////////
+// All Threat related stuff
+///////////////////////////////////////////////////////
 
-    for square in shakmaty::Square::ALL {
-        if let Some(piece) = board.piece_at(square) {
-            let enemy_occ = board.by_color(!piece.color);
-            let attacks = board.attacks_from(square) & enemy_occ;
-
-            let attacker_sq = square.to_usize();
-            for target in attacks {
-                let idx = calculate_threat_index(attacker_sq, target.to_usize(), perspective, is_mirrored);
-                acc.add_feature(idx, net);
-            }
-        }
+#[inline(always)]
+pub fn calculate_threat_index(mut attacker: usize, mut target: usize, perspective: Color, is_mirrored: bool) -> u16 {
+    if perspective == Color::Black {
+        attacker ^= 56;
+        target ^= 56;
     }
+    if is_mirrored {
+        attacker ^= 7;
+        target ^= 7;
+    }
+    (THREAT_OFFSET + attacker * 64 + target) as u16
+}
+#[inline(always)]
+pub fn attacks_from_for(board: &Board, sq: Square) -> Bitboard {
+    match board.piece_at(sq) {
+        Some(piece) => board.attacks_from(sq) & board.by_color(!piece.color),
+        None => Bitboard::EMPTY,
+    }
+}
+
+pub fn init_threats(board: &Board) -> [Bitboard; 64] {
+    let mut threats = [Bitboard::EMPTY; 64];
+    for sq in Square::ALL {
+        threats[sq.to_usize()] = attacks_from_for(board, sq);
+    }
+    threats
 }
 
 #[inline(always)]
@@ -283,21 +284,23 @@ impl Accumulator {
     }
 
     /// Add a feature to an accumulator.
-    pub fn add_feature(&mut self, feature_idx: usize, net: &Network) {
-        for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx].vals) {
+    pub fn add_feature(&mut self, feature_idx: u16, net: &Network) {
+        for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx as usize].vals) {
             *i += *d
         }
     }
 
     /// Combine remove and add features per move into a list and do them in one go instead as one per one.
-    pub fn apply_feature_updates(&mut self, adds: &[usize], removes: &[usize], net: &Network) {
+    pub fn apply_feature_updates(&mut self, adds: &[u16], removes: &[u16], net: &Network) {
 
         for &idx in adds {
+            let idx = idx as usize;
             for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx].vals) {
                 *i += *d
             }
         }
         for &idx in removes {
+            let idx = idx as usize;
             for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx].vals) {
                 *i -= *d
             }
