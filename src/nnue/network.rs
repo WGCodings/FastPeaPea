@@ -1,21 +1,12 @@
-const HIDDEN_SIZE: usize = 1536;
+const HIDDEN_SIZE: usize = 64;
 const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
 
-const NUM_OUTPUT_BUCKETS : usize = 8;
+const NUM_OUTPUT_BUCKETS : usize = 1;
 
-const KING_BUCKET_LAYOUT: [usize; 64] =  [
-    0, 0, 1, 1,1,1,0,0,
-    2, 2, 2, 2,2,2,2,2,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3,
-    3, 3, 3, 3,3,3,3,3
-];
-pub const NUM_INPUT_BUCKETS: usize = 4;
+const KING_BUCKET_LAYOUT: [usize; 64] =  [0;64];
+pub const NUM_INPUT_BUCKETS: usize = 1;
 
 #[cfg(target_feature = "avx2")]
 use std::arch::x86_64::*;
