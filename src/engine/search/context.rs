@@ -148,10 +148,10 @@ impl<'a> SearchContext<'a> {
 // =====================================================================================================================//
 #[derive(Clone, Copy)]
 pub struct AccumulatorDelta {
-    white_removed: [usize; 2],
-    white_added: [usize; 2],
-    black_removed: [usize; 2],
-    black_added: [usize; 2],
+    white_removed: [u16; 2],
+    white_added: [u16; 2],
+    black_removed: [u16; 2],
+    black_added: [u16; 2],
     n_removed: u8,
     n_added: u8,
     is_refresh: bool,
@@ -263,8 +263,8 @@ fn finny_refresh<P: Position>(pos: &P, net: &Network, perspective: Color, bucket
 
     let mut acc = entry.acc;
 
-    let mut adds = [0usize; 32];
-    let mut rems = [0usize; 32];
+    let mut adds = [0u16; 32];
+    let mut rems = [0u16; 32];
     let mut n_add = 0;
     let mut n_rem = 0;
 

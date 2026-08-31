@@ -42,7 +42,7 @@ pub fn get_bucket(board: &Board, perspective: Color) -> (usize,bool) {
 }
 
 #[inline(always)]
-pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize, is_mirrored : bool) -> usize {
+pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, perspective: Color, bucket: usize, is_mirrored : bool) -> u16 {
     if perspective == Color::Black {
         side = 1 - side;
         sq_idx ^= 56;
@@ -52,7 +52,7 @@ pub fn calculate_index(mut side: usize, mut sq_idx: usize, piece_type: usize, pe
         sq_idx ^= 7;
     }
 
-    bucket * 768 + side * 384 + piece_type * 64 + sq_idx
+    (bucket * 768 + side * 384 + piece_type * 64 + sq_idx ) as u16
 }
 
 #[inline(always)]
@@ -66,7 +66,7 @@ pub fn accumulator_for_perspective<P: Position>(pos: &P, net: &Network, perspect
             let sq_idx = shakmaty::Square::to_usize(square);
             let piece_type = role_index(piece.role);
             let side = if piece.color == Color::White { 0 } else { 1 };
-            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, bucket, is_mirrored), net);
+            acc.add_feature(calculate_index(side, sq_idx, piece_type, perspective, bucket, is_mirrored) as u16, net);
         }
     }
     (acc, bucket, is_mirrored)
@@ -271,22 +271,22 @@ impl Accumulator {
     }
 
     /// Add a feature to an accumulator.
-    pub fn add_feature(&mut self, feature_idx: usize, net: &Network) {
-        for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx].vals) {
+    pub fn add_feature(&mut self, feature_idx: u16, net: &Network) {
+        for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[feature_idx as usize].vals) {
             *i += *d
         }
     }
 
     /// Combine remove and add features per move into a list and do them in one go instead as one per one.
-    pub fn apply_feature_updates(&mut self, adds: &[usize], removes: &[usize], net: &Network) {
+    pub fn apply_feature_updates(&mut self, adds: &[u16], removes: &[u16], net: &Network) {
 
         for &idx in adds {
-            for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx].vals) {
+            for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx as usize].vals) {
                 *i += *d
             }
         }
         for &idx in removes {
-            for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx].vals) {
+            for (i, d) in self.vals.iter_mut().zip(&net.feature_weights[idx as usize].vals) {
                 *i -= *d
             }
         }
